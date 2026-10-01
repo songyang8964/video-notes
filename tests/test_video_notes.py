@@ -218,5 +218,17 @@ class KnowledgeAndDensityTests(unittest.TestCase):
         self.assertTrue(render.check_density(padded, cue_times, 100))
 
 
+
+class ModelArgumentTests(unittest.TestCase):
+    def test_default_models_and_effort_reach_the_cli(self):
+        from video_notes.config import DEFAULTS
+        from video_notes.llm import model_args
+        self.assertEqual(model_args('claude', DEFAULTS['claude_model'], DEFAULTS['claude_effort']),
+                         ['--model', 'claude-opus-5-5', '--effort', 'medium'])
+        self.assertEqual(model_args('codex', DEFAULTS['codex_model'], DEFAULTS['codex_effort']),
+                         ['-m', 'gpt-6.1-sol', '-c', 'model_reasoning_effort="medium"'])
+        self.assertEqual(model_args('claude', None, None), [])
+
+
 if __name__ == '__main__':
     unittest.main()

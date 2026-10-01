@@ -120,7 +120,9 @@ class Pipeline:
         for problem in problems:
             self.warn(f'subtitle: {problem}')
         self.srt_hash = sha256(self.srt)
-        self.model = Model(self.config['backend'], self.work / 'model-calls', self.config.get('model'), log=self.log)
+        backend = self.config['backend']
+        self.model = Model(backend, self.work / 'model-calls', self.config.get(f'{backend}_model'),
+                           self.config.get(f'{backend}_effort'), log=self.log)
         self.tesseract = tesseract_path(self.config.get('tesseract'))
         if not self.tesseract:
             self.warn('Tesseract not found: OCR text novelty is off (candidate ranking uses visuals only)')

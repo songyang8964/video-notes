@@ -54,7 +54,7 @@ def _fail(code, message):
 
 
 def doctor():
-    from .llm import ModelError, probe, resolve
+    from .llm import ModelError, candidates, probe, resolve
     from .transcribe import available_backends
     from .vision.ocr import tesseract_path
     config = load_config()
@@ -78,19 +78,24 @@ def doctor():
     for backend in ('claude', 'codex'):
         selected = config['backend'] == backend
         try:
-            resolve(backend)
+            exe = resolve(backend)
+            origin = next(o for p, o in candidates(backend) if str(p) == exe)
         except ModelError:
             fatal |= selected
             rows.append((f'model:{backend}', 'not found' + (' — SELECTED BACKEND MISSING' if selected else '')))
             continue
         if selected:
-            ok, detail = probe(backend)
+            ok, detail = probe(backend, config.get(f'{backend}_model'), config.get(f'{backend}_effort'))
             fatal |= not ok
-            fix = 'run `claude` and /login' if backend == 'claude' else 'run `codex login`'
-            rows.append((f'model:{backend}', 'ok, signed in (selected)' if ok
-                         else f'SELECTED BUT NOT USABLE: {detail} — {fix}'))
+            if 'unrecognized_model' in detail or 'unknown model' in detail.lower():
+                fix = f'this CLI version does not know the model; update it or `video-notes setup --model <name>`'
+            else:
+                fix = f'sign in once: "{exe}" then /login' if backend == 'claude' else f'sign in once: "{exe}" login'
+            chosen = f"{config.get(f'{backend}_model') or 'default'} / {config.get(f'{backend}_effort') or 'default'}"
+            rows.append((f'model:{backend}', (f'ok, signed in, {chosen} (selected) — {origin}: {exe}' if ok
+                         else f'SELECTED BUT NOT USABLE: {detail} — {fix} [{origin}: {exe}]')))
         else:
-            rows.append((f'model:{backend}', 'installed'))
+            rows.append((f'model:{backend}', f'installed — {origin}: {exe}'))
     tess = tesseract_path(config.get('tesseract'))
     rows.append(('ocr:tesseract', tess or 'not found (optional; OCR text novelty disabled)'))
     asr = available_backends(config)
@@ -109,7 +114,10 @@ def main(argv=None):
     if argv[:1] == ['setup']:
         parser = argparse.ArgumentParser(prog='video-notes setup', description='Save default settings once.')
         parser.add_argument('--backend', choices=['claude', 'codex'])
-        parser.add_argument('--model', help='model name passed to the CLI (optional)')
+        parser.add_argument('--model', help='model for the backend being configured, e.g. claude-opus-5-5 or gpt-6.1-sol')
+        parser.add_argument('--effort', help='reasoning effort for that backend, e.g. medium')
+        parser.add_argument('--claude-path', help='claude executable, e.g. the copy inside the Claude desktop app')
+        parser.add_argument('--codex-path', help='codex executable, e.g. the copy inside the Codex desktop app')
         parser.add_argument('--language', dest='output_language', help='note language, e.g. 中文 or English')
         parser.add_argument('--max-images', type=int)
         parser.add_argument('--tesseract', help='path to tesseract.exe (optional)')
@@ -117,6 +125,11 @@ def main(argv=None):
         parser.add_argument('--asr-backend', choices=['whisperx', 'faster-whisper', 'openai-whisper'])
         parser.add_argument('--whisperx', help='path to the whisperx executable')
         args = vars(parser.parse_args(argv[1:]))
+        target = args.get('backend') or load_config()['backend']
+        for key in ('model', 'effort'):  # stored per backend so switching backends keeps both choices
+            if args.get(key) is not None:
+                args[f'{target}_{key}'] = args[key]
+            args.pop(key, None)
         changes = {k: v for k, v in args.items() if v is not None}
         path = save_config(changes)
         print(f'saved {path}')

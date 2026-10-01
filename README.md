@@ -1,5 +1,7 @@
 # video-notes
 
+**中文** | [English](README.en.md) | [Magyar](README.hu.md)
+
 把本地的讲座、课程或培训视频，自动整理成**带原视频截图、可以直接分享的 Markdown 学习笔记**。
 
 - 按原讲解顺序和思路成文，完整解释原因、机制、条件、步骤和例子，不是摘要或逐字稿。
@@ -244,6 +246,25 @@ flowchart TD
   - [Claude Code](https://docs.anthropic.com/claude-code)：安装后在终端运行一次 `claude`，按提示用 `/login` 登录
   - 或 Codex CLI：安装后运行 `codex login`
 
+### 使用桌面版应用（Claude 桌面版 / Codex 桌面版）
+
+工具通过命令行程序调用模型，但**不需要单独安装命令行**：桌面版应用里自带同一个程序，工具会自动找到它。查找顺序：
+
+1. `video-notes setup --claude-path <路径>` / `--codex-path <路径>` 指定的程序；
+2. 系统 PATH 中的 `claude` / `codex`；
+3. 桌面版应用自带的副本：
+   - Claude 桌面版：`%APPDATA%\Claude\claude-code\<版本>\claude.exe`（自动选最新版本）
+   - Codex 桌面版：`%LOCALAPPDATA%\OpenAI\Codex\bin\codex.exe`
+
+没有手动指定路径时，若同时找到多个版本（例如 PATH 里一个、桌面版里一个），会选**版本号最新**的那个，因为旧版本可能不认识新的模型名。`video-notes doctor` 会显示实际使用的是哪一个程序以及它的来源。
+
+注意：桌面应用里的登录只在应用内部有效。从终端直接调用这份程序时，它需要自己的登录，运行一次即可：
+
+```bash
+"%APPDATA%\Claude\claude-code\<版本>\claude.exe"        # 进入后输入 /login
+"%LOCALAPPDATA%\OpenAI\Codex\bin\codex.exe" login
+```
+
 可选：
 
 - Tesseract OCR：提升候选截图排序（命令行、代码、表格类内容收益最大）
@@ -275,11 +296,21 @@ sh install.sh
 ### 首次配置
 
 ```bash
-video-notes setup --backend claude       # 或 codex；可加 --model <模型名>
+video-notes setup --backend claude       # 或 codex
+video-notes setup --model claude-opus-5-5 --effort medium   # 可选：修改当前后端的模型和推理强度
 video-notes setup --language 中文         # 笔记语言，默认中文；也可 English
 video-notes setup --tesseract "C:\Program Files\Tesseract-OCR\tesseract.exe" --ocr-langs eng+chi_sim   # 可选
 video-notes doctor                        # 检查环境，包括一次真实的模型登录测试
 ```
+
+默认模型（不设置时使用）：
+
+| 后端 | 模型 | 推理强度 |
+| --- | --- | --- |
+| `claude`（Claude Code / Claude 桌面版） | `claude-opus-5-5`（Claude Opus 5.5） | `medium` |
+| `codex`（Codex CLI / Codex 桌面版） | `gpt-6.1-sol`（GPT sol 6.1） | `medium` |
+
+两个后端各自记住自己的模型和强度，切换后端不会丢失设置。修改模型或强度后，之前缓存的模型结果不会被复用（缓存键包含模型和强度）。
 
 `doctor` 会逐项报告：FFmpeg、Python 依赖、模型命令行是否已安装且已登录、OCR、语音识别后端、配置文件位置。必需项缺失时返回非零退出码，并给出修复方法。
 
@@ -458,7 +489,9 @@ flowchart TD
 | 键 | 默认值 | 说明 |
 | --- | --- | --- |
 | `backend` | `claude` | 模型后端：`claude` 或 `codex` |
-| `model` | 空 | 传给模型命令行的模型名（空 = 命令行默认） |
+| `claude_model` / `claude_effort` | `claude-opus-5-5` / `medium` | Claude 后端的模型与推理强度（low、medium、high、xhigh、max） |
+| `codex_model` / `codex_effort` | `gpt-6.1-sol` / `medium` | Codex 后端的模型与推理强度（minimal、low、medium、high） |
+| `claude_path` / `codex_path` | 空 | 指定命令行程序路径（空 = 先找 PATH，再找桌面版应用自带的副本） |
 | `output_language` | `中文` | 笔记语言 |
 | `max_images` | 8 | 每章最多插图数 |
 | `shortlist` | 16 | 每章交给模型看的候选图数量 |
@@ -491,6 +524,8 @@ flowchart TD
 
 ## 常见问题
 
+**想用桌面版应用，不想装命令行**：直接运行 `video-notes doctor`，工具会自动找到桌面应用自带的程序；如果提示未登录，按 [使用桌面版应用](#使用桌面版应用claude-桌面版--codex-桌面版) 中的命令登录一次。
+
 **`doctor` 提示模型 "not usable" / 登录过期**：在终端运行 `claude` 并 `/login`（或 `codex login`），然后重新运行 `video-notes`，会从断点继续。
 
 **提示 "Several videos found"**：当前文件夹有多个 `.mp4`，请用 `video-notes "文件名.mp4"` 指定。
@@ -509,6 +544,7 @@ flowchart TD
 
 ```bash
 python -m unittest tests.test_video_notes -v      # 单元测试：字幕解析与选择、分章、检查规则、移植算法、输出保护等
+python -m unittest tests.test_readme_sync          # 三种语言的 README 结构是否同步
 python tests/integration_scripted.py <文件夹>      # 用脚本化模型在真实视频片段上跑通全流程（不调用真实模型）
 ```
 
@@ -529,5 +565,7 @@ src/video_notes/
   prompts/        各阶段提示词（通用规则、知识点、选图、写作、审查、修订、全文复核）
 colab/transcribe.ipynb   Colab T4 GPU 字幕生成笔记本
 ```
+
+README 有中文、英语、匈牙利语三个版本，**每次修改必须三种语言同步更新**；`tests/test_readme_sync.py` 会检查三份文件的章节、示意图和代码块数量是否一致，不一致时测试失败。
 
 第三方许可声明见 [NOTICE](NOTICE)。

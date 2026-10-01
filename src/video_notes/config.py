@@ -19,7 +19,12 @@ from pathlib import Path
 
 DEFAULTS = dict(
     backend='claude',          # claude | codex
-    model=None,                # optional model name passed to the CLI
+    claude_model='claude-opus-5-5',  # model passed to `claude --model`
+    claude_effort='medium',          # `claude --effort`: low | medium | high | xhigh | max
+    codex_model='gpt-6.1-sol',       # model passed to `codex exec -m`
+    codex_effort='medium',           # codex model_reasoning_effort: minimal | low | medium | high
+    claude_path=None,          # explicit claude executable (default: PATH, then the desktop app bundle)
+    codex_path=None,           # explicit codex executable (default: PATH, then the desktop app bundle)
     output_language='中文',
     max_images=8,
     shortlist=16,              # candidates shown to the vision model per chapter
