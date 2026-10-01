@@ -22,7 +22,8 @@ video-notes doctor            # 检查环境
 
 # 3. 每次使用：进入放视频（和同名 .srt）的文件夹
 cd D:\课程
-video-notes                   # 生成 output\课程\培训笔记.md + assets```
+video-notes                   # 生成 output\课程\培训笔记.md 和 assets 文件夹
+```
 
 ```mermaid
 flowchart LR
