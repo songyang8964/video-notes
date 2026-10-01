@@ -265,6 +265,24 @@ Megjegyzés: az asztali alkalmazásban történt bejelentkezés csak az alkalmaz
 "%LOCALAPPDATA%\OpenAI\Codex\bin\codex.exe" login
 ```
 
+#### Futtatás az asztali alkalmazás beszélgetéséből
+
+Terminál nélkül is megy: az asztali alkalmazás MI-je futtathatja helyetted.
+
+1. Nyisd meg a **Claude asztali → Code** lapot vagy a **Codex asztali alkalmazást**, és válaszd munkamappának a videót tartalmazó mappát.
+2. Írd be a beszélgetésbe például:
+
+   ```text
+   Futtasd a video-notes parancsot ebben a mappában. Ha kész, add meg a jegyzet útvonalát, és foglald össze a report.md-ben szereplő sikertelen fejezeteket és korlátozásokat.
+   ```
+
+3. Az MI ugyanazt a `video-notes` parancsot futtatja, és visszaolvassa neked az eredményt és a jelentést.
+
+Megjegyzések:
+
+- Az MI csak lefuttatja helyetted a parancsot; a modellhívásokat továbbra is a fent megtalált CLI végzi, ezért a fenti egyszeri bejelentkezés itt is szükséges.
+- A két óránál hosszabb videók órákig futnak; a beszélgetést tartsd nyitva. Hosszú videóknál kényelmesebb a saját terminálban futtatni. Megszakadás esetén futtasd újra, és ott folytatja, ahol abbahagyta.
+
 Opcionális:
 
 - Tesseract OCR: javítja a jelöltek rangsorolását (terminálok, kódok és táblázatok esetén a leghasznosabb)

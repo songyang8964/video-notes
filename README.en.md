@@ -265,6 +265,24 @@ Note: the sign-in inside a desktop app is only valid inside that app. When the b
 "%LOCALAPPDATA%\OpenAI\Codex\bin\codex.exe" login
 ```
 
+#### Running it from a desktop-app conversation
+
+You can also skip the terminal and let the AI in the desktop app run it for you:
+
+1. Open **Claude desktop → Code**, or the **Codex desktop app**, and choose the folder that holds the video as the working folder.
+2. Type in the conversation, for example:
+
+   ```text
+   Run video-notes in this folder. When it finishes, tell me the note's path and summarise the chapters that did not pass and any degradations listed in report.md.
+   ```
+
+3. The AI runs the same `video-notes` command and reads the result and the report back to you.
+
+Notes:
+
+- The AI only runs the command for you; model calls are still made by the CLI found above, so the one-time sign-in above is still required.
+- Videos of two hours or more take hours; keep the conversation open. For long videos running it in your own terminal is more convenient. If it gets interrupted, run it again and it resumes where it stopped.
+
 Optional:
 
 - Tesseract OCR: improves candidate ranking (most useful for terminals, code and tables)
