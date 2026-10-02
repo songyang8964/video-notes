@@ -191,7 +191,7 @@ A modell elolvassa a fejezet feliratait (előtte és utána néhány sor kontext
 - Minden jelöltet **az eredeti videóból, teljes felbontásban, a valódi időbélyeg alapján** rögzít, és feljegyzi a tényleges kocka időpontját.
 - **Minőségszűrés**: a túl sötét, túl világos, elmosódott (alacsony Laplace-variancia, pl. áttűnés) vagy szinte üres kockákat kiszűri, és az okot rögzíti.
 - **OCR (opcionális, Tesseract kell hozzá)**: a tartalmi területet és a feliratsávot külön ismeri fel, és „szövegújdonságot” számol: a megmaradó új tartalmi szöveg sokat ér; a felvillanó vagy feliratbeli változás keveset.
-- **Változatosság szerinti válogatás**: a változás erősségét, a szövegújdonságot és az élességet összesítő pontszám, büntetéssel a már kiválasztottakhoz túl hasonló kockákra (kis felbontású bélyegkép-vektorok koszinusz-hasonlósága) és jutalommal az időbeli szórásért; fejezetenként legfeljebb 16 kerül a modell elé.
+- **Ismétlődő képek összevonása**: a jelölteket 320×180-as szürkeárnyalatos képként veti össze; ha a képpontok kevesebb mint 1%-a változott érdemben, ugyanaz a kép, és csak egy marad meg (elsőként a kötelező időpontok, aztán a kész állapot). A nagyjából egy másodperc alatt átlapozott diák is megmaradnak. Minden különböző kép a modell elé kerül; csak ha egy fejezetben 32-nél több van, akkor szűkíti 32-re a változatosság szerinti válogatás (változás erőssége, szövegújdonság, élesség, hasonlóság a már kiválasztottakhoz, időbeli szórás). A modell által kért kockák a meglévő jelöltekhez adódnak hozzá.
 - Minden jelölthöz csatolja, **mi hangzott el, amíg az a kép a képernyőn volt** (feliratsorszám-tartomány), hogy a modell megítélhesse, illik-e a kép a szöveghez.
 - A modell 1280 képpontos olvasási másolatokat lát a keret kímélése érdekében; az írás és az ellenőrzés az eredetiket használja, hogy a parancsok és számok olvashatók maradjanak.
 
@@ -201,9 +201,9 @@ flowchart TD
     B --> Q{"Minőségszűrés"}
     Q -- túl sötét / túl világos / elmosódott / üres --> R1["Kiesik (ok rögzítve)"]
     Q -- megfelelő --> O["OCR szövegújdonság (opcionális)"]
-    O --> D{"Változatosság szerinti válogatás<br/>fontosság + szórás − hasonlóság"}
-    D -- túl hasonló --> R2["Kiesik (hasonlóság rögzítve)"]
-    D -- szűkített lista --> SH["Fejezetenként ≤ 16<br/>a kép alatt elhangzott szöveggel"]
+    O --> D{"Ismétlődő képek összevonása<br/>< 1% változott képpont = ugyanaz a kép"}
+    D -- ugyanaz a kép --> R2["Összevonva (rögzítve, melyikkel azonos)"]
+    D -- különböző --> SH["Fejezetenként ≤ 32 (csak fölötte szűkít)<br/>a kép alatt elhangzott szöveggel"]
     SH --> M["A modell kiválaszt ≤ 8 kulcsképet"]
     M --> N["A megfelelő magyarázat mellé kerül"]
 ```
@@ -512,7 +512,7 @@ A beállítófájl: `%APPDATA%\video-notes\config.json` (Windows) vagy `~/.confi
 | `claude_path` / `codex_path` | üres | A CLI útvonala (üres = előbb a PATH, aztán az asztali alkalmazás mellékelt példánya) |
 | `output_language` | `中文` | A jegyzet nyelve |
 | `max_images` | 8 | Képek maximális száma fejezetenként |
-| `shortlist` | 16 | A modellnek fejezetenként mutatott jelöltek száma |
+| `shortlist` | 32 | A modellnek fejezetenként mutatott különböző képek legnagyobb száma (csak fölötte szűkít) |
 | `chapter_minutes` | 10 | Célzott fejezethossz (perc) |
 | `use_adaptive` | true | A PySceneDetect kiegészítő érzékelő használata (jobb lefedés, kicsit lassabb) |
 | `review_cycles` | 2 | Javítási körök maximális száma fejezetenként |

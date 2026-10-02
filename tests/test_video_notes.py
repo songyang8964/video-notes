@@ -230,5 +230,33 @@ class ModelArgumentTests(unittest.TestCase):
         self.assertEqual(model_args('claude', None, None), [])
 
 
+
+class DuplicateScreenTests(unittest.TestCase):
+    def test_same_screen_merged_but_similar_text_slides_kept(self):
+        from PIL import Image, ImageDraw
+        from video_notes.candidates import drop_duplicates
+        with tempfile.TemporaryDirectory() as d:
+            def slide(name, lines, noise=False):
+                img = Image.new('L', (1280, 720), 255)
+                draw = ImageDraw.Draw(img)
+                draw.rectangle((0, 0, 1280, 80), fill=40)            # shared template header
+                for i, width in enumerate(lines):                    # text lines at slide size
+                    draw.rectangle((100, 150 + i * 70, 100 + width, 190 + i * 70), fill=0)
+                if noise:
+                    draw.point((5, 700), fill=0)                       # codec-noise-sized change
+                path = Path(d) / f'{name}.jpg'
+                img.convert('RGB').save(path)
+                return path
+            a = slide('a', [700, 500, 900])
+            b = slide('b', [700, 500, 900], noise=True)
+            c = slide('c', [400, 950, 300])
+            live = [dict(frame_id='A', path=str(a), source='screen-start', actual_ms=0, status='candidate'),
+                    dict(frame_id='B', path=str(b), source='screen-end', actual_ms=5000, status='candidate'),
+                    dict(frame_id='C', path=str(c), source='screen-start', actual_ms=9000, status='candidate')]
+            kept = [r['frame_id'] for r in drop_duplicates(live)]
+        self.assertEqual(kept, ['B', 'C'])              # finished state preferred; different text kept
+        self.assertEqual(live[0]['status'], 'duplicate')
+
+
 if __name__ == '__main__':
     unittest.main()

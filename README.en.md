@@ -191,7 +191,7 @@ The model reads the chapter's subtitles (plus a few lines before and after as co
 - Every candidate is **captured from the original video at full resolution using the real timestamp**, and the actual frame time is recorded.
 - **Quality filter**: frames that are too dark, too bright, blurry (low Laplacian variance, e.g. fades) or almost blank are removed, with the reason recorded.
 - **OCR (optional, needs Tesseract)**: the content area and the subtitle band are recognised separately to compute "text novelty": new content text that persists scores high; text that flashes by or subtitle changes score low.
-- **Diversity selection**: a score combining change strength, text novelty and sharpness, with a penalty for frames too similar to those already chosen (cosine similarity of low-resolution thumbnail vectors) and a bonus for spreading over time; at most 16 per chapter are shown to the model.
+- **Merging duplicate screens**: candidates are compared as 320×180 grayscale images; if fewer than 1% of pixels changed clearly they are the same screen and only one is kept (preferring required times, then the finished state). Slides that were flipped past in about a second are kept too. All distinct screens go to the model; only when a chapter has more than 32 does a diversity selection (change strength, text novelty, sharpness, similarity to frames already chosen, spread over time) trim it to 32. Frames the model requests are added on top of the existing candidates.
 - Each candidate carries **what was said while that screen was displayed** (a range of subtitle numbers), so the model can judge whether picture and text match.
 - The model looks at 1280-pixel reading copies to save usage; writing and review use the originals so commands and numbers stay legible.
 
@@ -201,9 +201,9 @@ flowchart TD
     B --> Q{"Quality filter"}
     Q -- too dark / too bright / blurry / blank --> R1["Dropped (reason recorded)"]
     Q -- good --> O["OCR text novelty (optional)"]
-    O --> D{"Diversity selection<br/>importance + spread − similarity to chosen"}
-    D -- too similar --> R2["Dropped (similarity recorded)"]
-    D -- shortlisted --> SH["≤ 16 per chapter<br/>with the speech heard during the screen"]
+    O --> D{"Merge duplicate screens<br/>< 1% changed pixels = same screen"}
+    D -- same screen --> R2["Merged (records which frame it duplicates)"]
+    D -- distinct --> SH["≤ 32 per chapter (trimmed only above that)<br/>with the speech heard during the screen"]
     SH --> M["Model picks key images ≤ 8"]
     M --> N["Placed next to the matching explanation"]
 ```
@@ -512,7 +512,7 @@ The config file is `%APPDATA%\video-notes\config.json` (Windows) or `~/.config/v
 | `claude_path` / `codex_path` | empty | Explicit CLI path (empty = PATH first, then the desktop app's bundled copy) |
 | `output_language` | `中文` | Note language |
 | `max_images` | 8 | Maximum images per chapter |
-| `shortlist` | 16 | Candidates shown to the model per chapter |
+| `shortlist` | 32 | Maximum distinct screens shown to the model per chapter (trimmed only above that) |
 | `chapter_minutes` | 10 | Target chapter length (minutes) |
 | `use_adaptive` | true | Use the PySceneDetect auxiliary detector (better recall, a bit slower) |
 | `review_cycles` | 2 | Maximum revision rounds per chapter |

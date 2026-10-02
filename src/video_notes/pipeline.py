@@ -335,16 +335,17 @@ class Pipeline:
             self.log(f'{chapter} {stamp(start)}–{stamp(end)}: prepare')
             topics, knowledge = self.prepare(chapter, owned, directory)
 
-            def pool(extra=()):
+            def pool(extra=(), keep=()):
                 return cand_mod.build(chapter, start, end, screens, self.video, self.duration_ms,
                                       directory / 'candidates', cues=owned, shortlist=self.config['shortlist'],
                                       tesseract=self.tesseract, ocr_langs=self.config['ocr_langs'],
-                                      requested_ms=list(requested) + list(extra), log=self.log)[0]
+                                      requested_ms=list(requested) + list(extra), keep_ids=keep,
+                                      log=self.log)[0]
             shortlist = pool()
             selected, notes, asks = self.select(chapter, owned, topics, shortlist, start, end, directory)
             if asks:
                 self.log(f'{chapter}: model asked for {len(asks)} more moment(s); re-judging')
-                shortlist = pool(asks)
+                shortlist = pool(asks, keep={f['frame_id'] for f in shortlist})
                 selected, notes, _ = self.select(chapter, owned, topics, shortlist, start, end, directory, 1)
             self.log(f'{chapter}: {len(selected)} key images; writing')
             results[chapter] = self.write(chapter, owned, topics, knowledge, selected, notes, directory)
@@ -356,12 +357,13 @@ class Pipeline:
         if sha256(self.video) != self.video_hash or sha256(self.srt) != self.srt_hash:
             raise RuntimeError('source files changed during processing')
         failed = [c for c, r in results.items() if r['problems'] or not r['review_pass']]
-        lines = ['# video-notes report', '', f'note: {note}', f'images: {len(inserted)}',
+        lines = ['# video-notes report', '', f'note: {note}', f'images inserted: {len(inserted)}',
                  f'subtitles: {self.srt_source} ({self.srt.name})', f'model: {self.model.identity()}, '
                  f'calls this run: {self.model.calls}', f'elapsed: {round(time.time() - started)} s', '',
                  '## warnings (degraded or notable)'] + [f'- {w}' for w in self.warnings or ['none']]
         lines += ['', '## chapters'] + [
-            f"- {c}: {stamp(r['owned'][0]['start'])}, images {len(r['frames'])}, review "
+            f"- {c}: {stamp(r['owned'][0]['start'])}, images selected {len(r['frames'])}, inserted "
+            f"{len({m[0] for m in render.PLACEHOLDER.findall(render.prose(r['text']))})}, review "
             f"{'PASS' if r['review_pass'] else 'REVISE (unresolved, see ' + c + '/review.md)'}"
             + (f"; problems: {'; '.join(r['problems'])}" if r['problems'] else '') for c, r in results.items()]
         lines += ['', f'## whole-document review: {len(global_rows)} fix(es) applied']

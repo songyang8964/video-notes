@@ -9,6 +9,7 @@ import csv
 import json
 from pathlib import Path
 
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from . import media
@@ -23,6 +24,10 @@ SIGNIFICANCE = {'requested': 1.0, 'screen-start': 0.6, 'initial': 0.5, 'screen-e
 BLANK_AREA = 0.001
 HEARTBEAT_MS = 20000       # one sample per 20 s inside screens with no detected change
 READ_LONG_EDGE = 1280      # reading copies for the vision model; text stays legible
+DUPLICATE_AREA = 0.01      # < 1% of pixels clearly changed (320×180 gray) = the same screen.
+                           # Measured: same screen 0.00–0.97%, different slides ≥ 2% even when
+                           # two text slides share a template (thumbnail cosine could not separate them)
+KEEP_ORDER = {'requested': 0, 'screen-end': 1, 'screen-start': 2, 'initial': 3, 'heartbeat': 4, 'chapter-seed': 5}
 
 
 def _font(size):
@@ -65,6 +70,29 @@ def contact_sheets(rows, directory: Path, per_sheet=12, columns=4, tile=(480, 27
     return sheets
 
 
+def _gray(path):
+    with Image.open(path) as img:
+        return np.asarray(img.convert('L').resize((320, 180)), dtype=np.float32)
+
+
+def changed_area(a, b):
+    return float((np.abs(a - b) > 25).mean())
+
+
+def drop_duplicates(live):
+    """Keep one frame per visibly identical screen; prefer requested, then finished states."""
+    kept = []
+    for r in sorted(live, key=lambda r: (KEEP_ORDER.get(r['source'], 9), r['actual_ms'])):
+        g = _gray(r['path'])
+        twin = next((k for k in kept if changed_area(g, k['gray']) < DUPLICATE_AREA), None)
+        if twin is not None and r['source'] != 'requested':
+            r.update(status='duplicate', reason=f"same screen as {twin['frame_id']}")
+            continue
+        r['gray'] = g
+        kept.append(r)
+    return sorted(kept, key=lambda r: r['actual_ms'])
+
+
 def screen_intervals(screens, duration_ms):
     """Displayed intervals [start, end) from screen-start/initial times (ms)."""
     starts = sorted({round(s['time'] * 1000) for s in screens if s['source'] in ('initial', 'screen-start')} | {0})
@@ -79,7 +107,7 @@ def _interval_of(ms, intervals):
 
 
 def build(chapter, start_ms, end_ms, screens, video, duration_ms, directory: Path, *, cues=(),
-          shortlist=16, tesseract=None, ocr_langs='eng', requested_ms=(), log=print):
+          shortlist=32, tesseract=None, ocr_langs='eng', requested_ms=(), keep_ids=(), log=print):
     """Return (shortlist_rows, all_rows). Writes candidates.csv, reading copies and contact sheets."""
     directory.mkdir(parents=True, exist_ok=True)
     frames_dir = directory / 'frames'
@@ -97,7 +125,11 @@ def build(chapter, start_ms, end_ms, screens, video, duration_ms, directory: Pat
     rows, failures, first_error = [], 0, ''
     for ms, source in sorted(planned, key=lambda p: (-SIGNIFICANCE.get(p[1], 0), p[0])):
         ms = min(max(ms, start_ms), end_ms - 100)
-        if source != 'requested' and any(abs(r['actual_ms'] - ms) < 1500 for r in rows):
+        # Only filler samples are dropped by time. Detected screens are kept however close together:
+        # a slide shown for about a second (flipped past quickly) is still a distinct screen, and the
+        # visual duplicate check below decides what is really the same picture.
+        too_close = 1500 if source in ('heartbeat', 'chapter-seed') else 200
+        if source != 'requested' and any(abs(r['actual_ms'] - ms) < too_close for r in rows):
             continue
         frame_id = f'{chapter}F{ms:08d}'
         path = frames_dir / f'{frame_id}.jpg'
@@ -138,16 +170,20 @@ def build(chapter, start_ms, end_ms, screens, video, duration_ms, directory: Pat
     for r in live:
         r['time_ms'] = r['actual_ms']
         r['vector'] = select.thumbnail_vector(Path(r['path']))
-    chosen = select.select(live, shortlist, end_ms - start_ms)
-    must = [r for r in live if r['source'] == 'requested' and r not in chosen]
+    # Distinct screens all go to the model unless there are more than `shortlist`; only then
+    # does the diversity selector trim. Requested frames and an earlier shortlist always stay.
+    distinct = drop_duplicates(live)
+    chosen = select.select(distinct, shortlist, end_ms - start_ms) if len(distinct) > shortlist else list(distinct)
+    must = [r for r in distinct if (r['source'] == 'requested' or r['frame_id'] in keep_ids) and r not in chosen]
     chosen = sorted(chosen + must, key=lambda r: r['actual_ms'])
     chosen_ids = {r['frame_id'] for r in chosen}
     for r in live:
+        r.pop('gray', None)
         if r['frame_id'] in chosen_ids:
             r['status'] = 'shortlisted'
             r['read_path'] = str(reading_copy(Path(r['path'])))
-        else:
-            r.update(status='not-shortlisted', reason=f"similar to a kept frame ({r.get('nearest_similarity', '')})")
+        elif r['status'] != 'duplicate':
+            r.update(status='not-shortlisted', reason=f"trimmed by diversity selection (budget {shortlist})")
     for r in rows:
         r['ocr'] = ' '.join(r.get('ocr', '').split())[:300]
         r['text_novelty'] = round(r.get('text_novelty', 0.0), 3)
@@ -157,5 +193,5 @@ def build(chapter, start_ms, end_ms, screens, video, duration_ms, directory: Pat
         writer.writerows(rows)
     contact_sheets(chosen, directory)
     log(f'{chapter}: {len(rows)} candidates ({failures} unreadable), {len(live)} passed quality, '
-        f'{len(chosen)} shortlisted')
+        f'{len(distinct)} distinct screens, {len(chosen)} shortlisted')
     return chosen, rows
