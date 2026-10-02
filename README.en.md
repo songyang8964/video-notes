@@ -29,10 +29,10 @@ video-notes                   # creates output\course\培训笔记.md and the as
 
 ```mermaid
 flowchart LR
-    A["course.mp4<br/>(+ same-name .srt, optional)"] --> B["video-notes"]
-    B --> C["output/course/培训笔记.md"]
-    B --> D["output/course/assets/*.jpg"]
-    B --> E[".work/…/report.md<br/>review results and degradations"]
+    A["course.mp4<br/>+ same-name .srt (optional)"] --> B["video-notes"]
+    B --> C["培训笔记.md"]
+    B --> D["assets/ screenshots"]
+    B --> E["report.md<br/>check report"]
 ```
 
 ---
@@ -41,16 +41,16 @@ flowchart LR
 
 1. [Quick start](#quick-start)
 2. [Result](#result)
-3. [How it works](#how-it-works)
-4. [Installation](#installation)
-5. [Usage](#usage)
-6. [Generating subtitles on a Colab T4 GPU](#generating-subtitles-on-a-colab-t4-gpu)
-7. [Video context (optional)](#video-context-optional)
-8. [Quality assurance](#quality-assurance)
-9. [Output and internal records](#output-and-internal-records)
-10. [Configuration](#configuration)
-11. [Time and resources](#time-and-resources)
-12. [FAQ](#faq)
+3. [Installation](#installation)
+4. [Usage](#usage)
+5. [Generating subtitles on a Colab T4 GPU](#generating-subtitles-on-a-colab-t4-gpu)
+6. [Video context (optional)](#video-context-optional)
+7. [FAQ](#faq)
+8. [How it works](#how-it-works)
+9. [Quality assurance](#quality-assurance)
+10. [Output and internal records](#output-and-internal-records)
+11. [Configuration](#configuration)
+12. [Time and resources](#time-and-resources)
 13. [Development and tests](#development-and-tests)
 
 ---
@@ -84,155 +84,6 @@ A complete explanation: background → principle → conditions → steps → re
 ### Topic B
 …
 ```
-
----
-
-## How it works
-
-The whole pipeline is orchestrated locally. Only "understanding the content, choosing images, writing and reviewing" call a large language model (Claude Code CLI or Codex CLI, using your own signed-in account).
-
-```mermaid
-flowchart TD
-    V["course.mp4"] --> S{"Usable subtitles?"}
-    SUB["same-name .srt / .vtt<br/>or embedded subtitle track"] --> S
-    S -- yes --> CUES["Subtitles (with timing)"]
-    S -- no --> ASR["Speech recognition<br/>local or Colab T4 GPU"] --> CUES
-    V --> DET["② Whole-video screen-change detection<br/>(once, cached)"]
-    CUES --> CH["③ Chapters<br/>about 10 min, cut at pauses and slide changes"]
-    DET --> CH
-    CH --> P
-
-    subgraph LOOP["Each chapter"]
-        P["④ Topics + knowledge inventory<br/>(model reads subtitles)"] --> C["⑤ Candidate screenshots<br/>grab originals → quality filter → de-duplicate"]
-        C --> SEL["⑥ Pick key images ≤ 8<br/>(model looks at images, may request more)"]
-        SEL --> W["⑦ Write the text<br/>(model sees the originals)"]
-        W --> CHK{"⑧ Mechanical checks<br/>+ independent review"}
-        CHK -- failed, at most 2 rounds --> W
-    end
-
-    CHK -- passed --> G["⑨ Whole-document review<br/>transitions · consistency · coverage · repeated images"]
-    G --> OUT["⑩ 培训笔记.md + assets/ + report.md"]
-```
-
-Steps marked "model" call a large language model; everything else is local processing (FFmpeg, PyAV, image processing).
-
-### 1. Subtitle choice and transcription
-
-The tool finds "the dialogue that really belongs to this video":
-
-- Candidate sources, in order: the file given with `--srt`; `.srt` / `.vtt` files with the same name as the video (e.g. `course.srt`, `course.en.vtt`); text subtitle tracks embedded in the video. Same-name subtitles are ranked by language: requested language → untagged → other languages.
-- These subtitles are refused, with the reason recorded: fewer than 5 cues; covering less than 30% of the running time (usually a "forced" track that only translates foreign-language moments); times far beyond the video length (made for a different edit); more than 30% of cues starting with the previous cue's text (rolling auto-captions that were not de-duplicated).
-- WebVTT rolling captions are de-duplicated while parsing (each cue repeats the previous one).
-- A subtitle given with `--srt` is an explicit demand: if it fails the checks the run stops instead of silently using something else.
-- If no usable subtitle exists, speech is transcribed locally (WhisperX → faster-whisper → openai-whisper, whichever is installed). Without an NVIDIA GPU local transcription is slow; use a [Colab T4 GPU](#generating-subtitles-on-a-colab-t4-gpu) instead.
-
-### 2. Screen-change detection
-
-The core visuals of a lecture are slides, diagrams, code and terminals. Detection answers one question only: **when does the picture change?**
-
-- **Overlay bands are excluded**: the change frequency of every pixel row is measured first. Bands at the top or bottom edge that change far more often than the body (burned-in subtitles, scrolling banners) are excluded; otherwise every new subtitle line would look like a new slide.
-- **Three signals** (measured per frame on low-resolution grayscale):
-  - *Anchor drift*: average difference between the current frame and "the last settled screen" — catches a board that fills up gradually or code that appears line by line;
-  - *Cut area*: share of pixels that changed sharply between neighbouring frames — catches slide changes and cuts;
-  - *Instant change rate*: average difference between neighbouring frames — detects motion and also decides "the picture has settled, it can be captured".
-- **Auxiliary detector**: an optional PySceneDetect adaptive pass adds more cut times.
-- **Events and capture points**: signal peaks within 0.5 s are merged into one "screen change". For each change two settled frames are found: before the change (the **finished state** of the old screen) and after it (the **start** of the new screen). If a screen's start and finished state are nearly identical (SSIM ≥ 0.93), only the start is kept — e.g. a static slide; if they differ clearly, both are kept — e.g. a diagram that builds up step by step, or a command that has been typed.
-- **Frame rate from real timestamps**: screen recordings often have variable frame rates (nominally 60 fps, actually about 15 fps). All times use the real timestamps.
-Detection flow:
-
-```mermaid
-flowchart LR
-    F["Decode every frame<br/>scaled to 64×36 grayscale"] --> B["Remove overlay bands<br/>(burned-in subtitles, banners)"]
-    B --> S1["Anchor drift<br/>(gradual build-up)"]
-    B --> S2["Cut area<br/>(slide changes, cuts)"]
-    B --> S3["Instant change rate<br/>(motion, settled or not)"]
-    AD["Auxiliary detector<br/>(optional)"] --> M
-    S1 & S2 & S3 --> M["Merge peaks within 0.5 s<br/>= one screen change"]
-    M --> E["Search backwards and forwards<br/>for the nearest settled frame"]
-    E --> K{"Same screen:<br/>start vs finished<br/>SSIM ≥ 0.93?"}
-    K -- almost identical --> ONE["Keep only the start"]
-    K -- clearly different --> TWO["Keep start + finished"]
-```
-
-Which screenshots a slide change produces (a slide whose bullet points appear one by one):
-
-```
-time ──────────────────────────────────────────────────────────────────▶
-
-screen │ Slide A: title → point 1 → point 2 → point 3 │ Slide B …
-       │                                            │
-change │  ▁▁▁▁▁▃▁▁▁▁▁▁▃▁▁▁▁▁▁▃▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁█▁▁▁▁▁▁▁▁▁▁
-signal │       ↑ points appear (anchor drift builds)    ↑ slide change (cut-area peak)
-       │                                            │
-shots  │ ① A start                    ② A finished  │ ③ B start
-       │  (just shown, settled)       (before change, all points) │ (after change, settled)
-```
-
-- ① and ② differ clearly, so both become candidates; the model usually picks the more complete ②.
-- If A is a static slide, ① and ② are almost identical and only ① is kept.
-- If A stays on screen for a long time, a "heartbeat" screenshot is added every 20 seconds so small changes are not missed.
-
-- **Performance**: the whole video is decoded twice for measurement and once for the auxiliary detector; all start/finished comparisons happen in **one sequential decode** rather than thousands of random seeks. Results are cached and reused per chapter.
-
-### 3. Chapters
-
-The target is about 10 minutes per chapter (configurable). Within the last quarter of each window the cut is made at the subtitle boundary with the **longest pause**, preferably **close to a screen change**, so a topic is not split in the middle.
-
-### 4. Topics and knowledge inventory
-
-The model reads the chapter's subtitles (plus a few lines before and after as context) and does two things:
-
-- assigns every subtitle line to a **topic**, or marks it as off-topic with a reason; nothing may be missing, overlapping or out of order (checked by the program; invalid output must be redone);
-- builds a fine-grained **knowledge inventory**: definitions, mechanisms, conditions, causes, comparisons, examples, commands, configuration steps, verification results, risks, rollbacks and valuable Q&A, each marked important or supporting.
-
-### 5. Candidate screenshots
-
-- Candidate times come from: start and finished frames of screen changes; a sample every 20 seconds inside long unchanged screens (to catch small changes such as one more line in a terminal); required times from the video context; extra times requested by the model.
-- Every candidate is **captured from the original video at full resolution using the real timestamp**, and the actual frame time is recorded.
-- **Quality filter**: frames that are too dark, too bright, blurry (low Laplacian variance, e.g. fades) or almost blank are removed, with the reason recorded.
-- **OCR (optional, needs Tesseract)**: the content area and the subtitle band are recognised separately to compute "text novelty": new content text that persists scores high; text that flashes by or subtitle changes score low.
-- **Merging duplicate screens**: candidates are compared as 320×180 grayscale images; if fewer than 1% of pixels changed clearly they are the same screen and only one is kept (preferring required times, then the finished state). Slides that were flipped past in about a second are kept too. All distinct screens go to the model; only when a chapter has more than 32 does a diversity selection (change strength, text novelty, sharpness, similarity to frames already chosen, spread over time) trim it to 32. Frames the model requests are added on top of the existing candidates.
-- Each candidate carries **what was said while that screen was displayed** (a range of subtitle numbers), so the model can judge whether picture and text match.
-- The model looks at 1280-pixel reading copies to save usage; writing and review use the originals so commands and numbers stay legible.
-
-```mermaid
-flowchart TD
-    A["Candidate times<br/>screen start/finished + 20 s heartbeat + required times + model requests"] --> B["Capture original-resolution frames at real timestamps"]
-    B --> Q{"Quality filter"}
-    Q -- too dark / too bright / blurry / blank --> R1["Dropped (reason recorded)"]
-    Q -- good --> O["OCR text novelty (optional)"]
-    O --> D{"Merge duplicate screens<br/>< 1% changed pixels = same screen"}
-    D -- same screen --> R2["Merged (records which frame it duplicates)"]
-    D -- distinct --> SH["≤ 32 per chapter (trimmed only above that)<br/>with the speech heard during the screen"]
-    SH --> M["Model picks key images ≤ 8"]
-    M --> N["Placed next to the matching explanation"]
-```
-
-### 6. Choosing key images
-
-The model looks at every candidate together with the topics and the matching speech and picks key images for the **whole chapter**:
-
-- only structure diagrams, flowcharts, comparisons, tables, key commands or results that the reader needs;
-- one image per slide, the most complete one (usually the finished state); no title pages, tables of contents, text-only slides or speaker-only shots;
-- at most 8 per chapter, a chapter may have none; each image belongs to the topic it explains;
-- important information in images that were not chosen (numbers, configuration, relationships) is handed to the writing step to be expressed in text;
-- if the speech clearly refers to a key screen that is missing from the candidates, the model may request up to 3 extra moments; they are captured and judged once more.
-
-### 7. Writing
-
-The model writes the chapter in the original teaching order from the subtitles, the knowledge inventory and the chosen original images: one section per topic, images next to the matching explanation; off-topic material is only recorded in internal comments with the reason.
-
-### 8. Checks, review and revision
-
-See [Quality assurance](#quality-assurance). If the mechanical checks or the review fail, the model revises with the list of problems, at most 2 rounds.
-
-### 9. Whole-document review
-
-After all chapters are done the model reads the whole document and checks transitions between chapters, consistency of terms and numbers, coverage of the important knowledge, and **images repeated across chapters** (the program first finds pairs of images that look like the same slide). Problems are fixed per chapter; a revised chapter must still pass the mechanical checks, otherwise the previous version is kept and the event is recorded in the report.
-
-### 10. Output
-
-Everything is assembled into one Markdown file, chosen original images are copied to `assets/`, captions get the original video time, and an internal report `report.md` is written.
 
 ---
 
@@ -355,9 +206,9 @@ How resuming works:
 
 ```mermaid
 flowchart LR
-    R1["First run"] --> CA[(".work/video-notes/<br/>detection signals · screenshots · every model result")]
-    CA --> R2["Run again after an interruption<br/>finished work is reused, only the rest is done"]
-    CA --> R3["Run again after editing the context<br/>only affected model calls are redone"]
+    R1["First run"] --> CA[("Cache<br/>.work/video-notes")]
+    CA --> R2["Run again after a stop<br/>only the rest is done"]
+    CA --> R3["Context changed<br/>only affected parts redone"]
 ```
 
 Every model call is cached by a hash of "prompt text + image content": unchanged input reuses the previous result; changed input (for example an edited video context) triggers a new call.
@@ -387,12 +238,12 @@ Without a local NVIDIA GPU, local speech recognition for a 2-hour video can take
 ```mermaid
 sequenceDiagram
     participant PC as Your computer
-    participant CO as Colab (T4 GPU)
-    PC->>PC: ffmpeg extracts the audio course.m4a (about 75 MB)
-    PC->>CO: upload, or put it in Google Drive
-    CO->>CO: WhisperX transcription + word-level alignment
-    CO-->>PC: course.srt (browser download / Drive sync)
-    PC->>PC: put it next to course.mp4, run video-notes
+    participant CO as Colab T4 GPU
+    PC->>PC: Extract audio (ffmpeg)
+    PC->>CO: Upload audio
+    CO->>CO: WhisperX transcription + alignment
+    CO-->>PC: Download .srt
+    PC->>PC: Run video-notes
 ```
 
 1. (Recommended) Extract only the audio locally — small and quick to upload — keeping the video's file name:
@@ -443,6 +294,165 @@ The body (after `---`) is free text: subject, scope, confirmed terms and common 
 
 ---
 
+## FAQ
+
+**I want to use the desktop app, not install a CLI**: just run `video-notes doctor`; the tool finds the program bundled with the desktop app. If it says you are not signed in, sign in once with the commands in [Using the desktop apps](#using-the-desktop-apps-claude-desktop--codex-desktop).
+
+**`doctor` says the model is "not usable" / sign-in expired**: run `claude` and `/login` (or `codex login`) in a terminal, then run `video-notes` again; it resumes where it stopped.
+
+**"Several videos found"**: the folder contains more than one `.mp4`; name one: `video-notes "file.mp4"`.
+
+**Subtitle refused**: read the reason in the terminal (too few cues, low coverage, wrong length, rolling captions). Use the right subtitle, or delete it to let the tool transcribe.
+
+**A chapter's review shows REVISE**: the note is still generated. Read `.work/video-notes/…/<chapter>/review.md` and edit the note by hand if needed; a new run will not overwrite your edits.
+
+**Small text in a screenshot is hard to read**: `assets/` holds original-resolution screenshots. If a key screen was not chosen, add its time to `include_times` in the video context and run again (only the affected parts are redone).
+
+**The note is not in my language**: `video-notes setup --language English`, or set `output_language` in the config.
+
+---
+
+## How it works
+
+The whole pipeline is orchestrated locally. Only "understanding the content, choosing images, writing and reviewing" call a large language model (Claude Code CLI or Codex CLI, using your own signed-in account).
+
+```mermaid
+flowchart TD
+    V["course.mp4"] --> S{"Subtitles?"}
+    SUB["same-name or<br/>embedded subtitles"] --> S
+    S -- yes --> CUES["Subtitles"]
+    S -- no --> ASR["Speech recognition<br/>local or Colab"] --> CUES
+    V --> DET["② Screen detection<br/>once per video"]
+    CUES --> CH["③ Chapters<br/>about 10 min"]
+    DET --> CH
+    CH --> P
+    subgraph LOOP["Each chapter"]
+        P["④ Topics<br/>knowledge list"] --> C["⑤ Candidate screenshots"]
+        C --> SEL["⑥ Key images<br/>at most 8"]
+        SEL --> W["⑦ Write"]
+        W --> CHK{"⑧ Check<br/>review"}
+        CHK -- fail --> W
+    end
+    CHK -- pass --> G["⑨ Whole-document review"]
+    G --> OUT["⑩ Output note"]
+```
+
+Steps marked "model" call a large language model; everything else is local processing (FFmpeg, PyAV, image processing).
+
+### 1. Subtitle choice and transcription
+
+The tool finds "the dialogue that really belongs to this video":
+
+- Candidate sources, in order: the file given with `--srt`; `.srt` / `.vtt` files with the same name as the video (e.g. `course.srt`, `course.en.vtt`); text subtitle tracks embedded in the video. Same-name subtitles are ranked by language: requested language → untagged → other languages.
+- These subtitles are refused, with the reason recorded: fewer than 5 cues; covering less than 30% of the running time (usually a "forced" track that only translates foreign-language moments); times far beyond the video length (made for a different edit); more than 30% of cues starting with the previous cue's text (rolling auto-captions that were not de-duplicated).
+- WebVTT rolling captions are de-duplicated while parsing (each cue repeats the previous one).
+- A subtitle given with `--srt` is an explicit demand: if it fails the checks the run stops instead of silently using something else.
+- If no usable subtitle exists, speech is transcribed locally (WhisperX → faster-whisper → openai-whisper, whichever is installed). Without an NVIDIA GPU local transcription is slow; use a [Colab T4 GPU](#generating-subtitles-on-a-colab-t4-gpu) instead.
+
+### 2. Screen-change detection
+
+The core visuals of a lecture are slides, diagrams, code and terminals. Detection answers one question only: **when does the picture change?**
+
+- **Overlay bands are excluded**: the change frequency of every pixel row is measured first. Bands at the top or bottom edge that change far more often than the body (burned-in subtitles, scrolling banners) are excluded; otherwise every new subtitle line would look like a new slide.
+- **Three signals** (measured per frame on low-resolution grayscale):
+  - *Anchor drift*: average difference between the current frame and "the last settled screen" — catches a board that fills up gradually or code that appears line by line;
+  - *Cut area*: share of pixels that changed sharply between neighbouring frames — catches slide changes and cuts;
+  - *Instant change rate*: average difference between neighbouring frames — detects motion and also decides "the picture has settled, it can be captured".
+- **Auxiliary detector**: an optional PySceneDetect adaptive pass adds more cut times.
+- **Events and capture points**: signal peaks within 0.5 s are merged into one "screen change". For each change two settled frames are found: before the change (the **finished state** of the old screen) and after it (the **start** of the new screen). If a screen's start and finished state are nearly identical (SSIM ≥ 0.93), only the start is kept — e.g. a static slide; if they differ clearly, both are kept — e.g. a diagram that builds up step by step, or a command that has been typed.
+- **Frame rate from real timestamps**: screen recordings often have variable frame rates (nominally 60 fps, actually about 15 fps). All times use the real timestamps.
+Detection flow:
+
+```mermaid
+flowchart TD
+    F["Decode every frame<br/>small grayscale"] --> B["Remove subtitle<br/>and banner bands"]
+    B --> S1["Anchor drift"]
+    B --> S2["Cut area"]
+    B --> S3["Instant change rate"]
+    S1 & S2 & S3 --> M["Merge into<br/>one screen change"]
+    AD["Auxiliary detector"] --> M
+    M --> E["Settled frames<br/>before and after"]
+    E --> K{"Almost the same?"}
+    K -- yes --> ONE["Keep start only"]
+    K -- no --> TWO["Start + finished"]
+```
+
+Which screenshots a slide change produces (a slide whose bullet points appear one by one):
+
+| Moment | On screen | Screenshot |
+| --- | --- | --- |
+| Slide A appears | title only | ① A start |
+| Points appear one by one | change builds up slowly, not a new slide | — |
+| Just before the slide change | all points shown | ② A finished |
+| Settled after the change | slide B | ③ B start |
+
+- ① and ② differ clearly, so both become candidates; the model usually picks the more complete ②.
+- If A is a static slide, ① and ② are almost identical and only ① is kept.
+- If A stays on screen for a long time, a "heartbeat" screenshot is added every 20 seconds so small changes are not missed.
+
+- **Performance**: the whole video is decoded twice for measurement and once for the auxiliary detector; all start/finished comparisons happen in **one sequential decode** rather than thousands of random seeks. Results are cached and reused per chapter.
+
+### 3. Chapters
+
+The target is about 10 minutes per chapter (configurable). Within the last quarter of each window the cut is made at the subtitle boundary with the **longest pause**, preferably **close to a screen change**, so a topic is not split in the middle.
+
+### 4. Topics and knowledge inventory
+
+The model reads the chapter's subtitles (plus a few lines before and after as context) and does two things:
+
+- assigns every subtitle line to a **topic**, or marks it as off-topic with a reason; nothing may be missing, overlapping or out of order (checked by the program; invalid output must be redone);
+- builds a fine-grained **knowledge inventory**: definitions, mechanisms, conditions, causes, comparisons, examples, commands, configuration steps, verification results, risks, rollbacks and valuable Q&A, each marked important or supporting.
+
+### 5. Candidate screenshots
+
+- Candidate times come from: start and finished frames of screen changes; a sample every 20 seconds inside long unchanged screens (to catch small changes such as one more line in a terminal); required times from the video context; extra times requested by the model.
+- Every candidate is **captured from the original video at full resolution using the real timestamp**, and the actual frame time is recorded.
+- **Quality filter**: frames that are too dark, too bright, blurry (low Laplacian variance, e.g. fades) or almost blank are removed, with the reason recorded.
+- **OCR (optional, needs Tesseract)**: the content area and the subtitle band are recognised separately to compute "text novelty": new content text that persists scores high; text that flashes by or subtitle changes score low.
+- **Merging duplicate screens**: candidates are compared as 320×180 grayscale images; if fewer than 1% of pixels changed clearly they are the same screen and only one is kept (preferring required times, then the finished state). Slides that were flipped past in about a second are kept too. All distinct screens go to the model; only when a chapter has more than 32 does a diversity selection (change strength, text novelty, sharpness, similarity to frames already chosen, spread over time) trim it to 32. Frames the model requests are added on top of the existing candidates.
+- Each candidate carries **what was said while that screen was displayed** (a range of subtitle numbers), so the model can judge whether picture and text match.
+- The model looks at 1280-pixel reading copies to save usage; writing and review use the originals so commands and numbers stay legible.
+
+```mermaid
+flowchart TD
+    A["Candidate times"] --> B["Capture originals"]
+    B --> Q{"Good quality?"}
+    Q -- no --> R1["Dropped"]
+    Q -- yes --> D{"Same as a<br/>kept screen?"}
+    D -- yes --> R2["Merged"]
+    D -- no --> SH["Shortlisted<br/>at most 32 per chapter"]
+    SH --> M["Model picks key images<br/>at most 8"]
+    M --> N["Placed in the text"]
+```
+
+### 6. Choosing key images
+
+The model looks at every candidate together with the topics and the matching speech and picks key images for the **whole chapter**:
+
+- only structure diagrams, flowcharts, comparisons, tables, key commands or results that the reader needs;
+- one image per slide, the most complete one (usually the finished state); no title pages, tables of contents, text-only slides or speaker-only shots;
+- at most 8 per chapter, a chapter may have none; each image belongs to the topic it explains;
+- important information in images that were not chosen (numbers, configuration, relationships) is handed to the writing step to be expressed in text;
+- if the speech clearly refers to a key screen that is missing from the candidates, the model may request up to 3 extra moments; they are captured and judged once more.
+
+### 7. Writing
+
+The model writes the chapter in the original teaching order from the subtitles, the knowledge inventory and the chosen original images: one section per topic, images next to the matching explanation; off-topic material is only recorded in internal comments with the reason.
+
+### 8. Checks, review and revision
+
+See [Quality assurance](#quality-assurance). If the mechanical checks or the review fail, the model revises with the list of problems, at most 2 rounds.
+
+### 9. Whole-document review
+
+After all chapters are done the model reads the whole document and checks transitions between chapters, consistency of terms and numbers, coverage of the important knowledge, and **images repeated across chapters** (the program first finds pairs of images that look like the same slide). Problems are fixed per chapter; a revised chapter must still pass the mechanical checks, otherwise the previous version is kept and the event is recorded in the report.
+
+### 10. Output
+
+Everything is assembled into one Markdown file, chosen original images are copied to `assets/`, captions get the original video time, and an internal report `report.md` is written.
+
+---
+
 ## Quality assurance
 
 ### Mechanical checks (after every chapter; failing chapters go back for revision)
@@ -461,13 +471,13 @@ The per-chapter check-and-revise loop:
 
 ```mermaid
 flowchart TD
-    W["Write the text (model sees originals)"] --> C["Mechanical checks<br/>coverage · image count · placement · knowledge map · detail · banned words"]
-    C --> R["Independent review (model)<br/>knowledge · facts · image-text match · style"]
-    R --> J{"No check problems<br/>and review PASS?"}
+    W["Write"] --> C["Mechanical checks"]
+    C --> R["Independent review"]
+    R --> J{"All passed?"}
     J -- yes --> OK["Chapter done"]
-    J -- no --> F["Revise with the problem list"]
+    J -- no --> F["Revise"]
     F --> C
-    F -. still failing after 2 rounds .-> REP["Note still generated<br/>problems in report.md, exit code 1"]
+    F -. still failing after 2 rounds .-> REP["Output anyway<br/>problems in report"]
 ```
 
 ### Model review
@@ -540,29 +550,10 @@ Example: a roughly 2 h 40 min, 1080p screen recording with subtitles (ordinary l
 
 ---
 
-## FAQ
-
-**I want to use the desktop app, not install a CLI**: just run `video-notes doctor`; the tool finds the program bundled with the desktop app. If it says you are not signed in, sign in once with the commands in [Using the desktop apps](#using-the-desktop-apps-claude-desktop--codex-desktop).
-
-**`doctor` says the model is "not usable" / sign-in expired**: run `claude` and `/login` (or `codex login`) in a terminal, then run `video-notes` again; it resumes where it stopped.
-
-**"Several videos found"**: the folder contains more than one `.mp4`; name one: `video-notes "file.mp4"`.
-
-**Subtitle refused**: read the reason in the terminal (too few cues, low coverage, wrong length, rolling captions). Use the right subtitle, or delete it to let the tool transcribe.
-
-**A chapter's review shows REVISE**: the note is still generated. Read `.work/video-notes/…/<chapter>/review.md` and edit the note by hand if needed; a new run will not overwrite your edits.
-
-**Small text in a screenshot is hard to read**: `assets/` holds original-resolution screenshots. If a key screen was not chosen, add its time to `include_times` in the video context and run again (only the affected parts are redone).
-
-**The note is not in my language**: `video-notes setup --language English`, or set `output_language` in the config.
-
----
-
 ## Development and tests
 
 ```bash
 python -m unittest tests.test_video_notes -v      # unit tests: subtitle parsing and choice, chapters, check rules, algorithms, output protection
-python -m unittest tests.test_readme_sync          # the three README languages are structurally in sync
 python tests/integration_scripted.py <folder>      # run the full pipeline on a real clip with a scripted model (no real model calls)
 ```
 
@@ -583,7 +574,5 @@ src/video_notes/
   prompts/        prompts for each stage (general rules, topics, image choice, writing, review, revision, whole-document review)
 colab/transcribe.ipynb   Colab T4 GPU subtitle notebook
 ```
-
-The README exists in Chinese, English and Hungarian, and **every change must be made in all three languages**; `tests/test_readme_sync.py` compares headings, diagrams and code blocks across the three files and fails when they diverge.
 
 Third-party license notices are in [NOTICE](NOTICE).
