@@ -13,6 +13,8 @@
 
 ## 快速开始
 
+需要先装好 Python 3.10+、FFmpeg 和 git（Windows：依次运行 `winget install Python.Python.3.12`、`winget install Gyan.FFmpeg`、`winget install Git.Git`；没有 git 也可以在 GitHub 页面下载 ZIP 解压）。
+
 1. 安装（一次）：
 
 ```bash
@@ -21,9 +23,15 @@ cd video-notes
 powershell -ExecutionPolicy Bypass -File install.ps1 -AddToPath   # macOS/Linux: sh install.sh
 ```
 
-2. 把视频（和同名 `.srt` 字幕，可选）放进一个文件夹。
-3. 在 Claude 桌面版（Code）或 Codex 桌面版里打开这个文件夹，对 AI 说：“用 video-notes 把这个视频整理成笔记”。
-4. AI 运行 `video-notes prepare`，逐章写作，再运行 `video-notes assemble`；最后在视频旁边得到 Markdown 和 Word 两个版本。
+2. **完全退出并重新打开** Claude 或 Codex 应用，让它找到新安装的 `video-notes` 命令。
+3. 把视频（和同名 `.srt` 字幕，可选）放进一个文件夹。
+4. 在应用里打开这个文件夹（Claude 桌面版选 **Code**），把下面这段话原样发给 AI：
+
+   ```text
+   用 video-notes 把这个文件夹里的视频整理成笔记：先运行 video-notes prepare，阅读它输出的资料包说明，按每章 brief.md 写好 topics.csv、knowledge.csv、chapter.md 和 review.md，再运行 video-notes assemble，直到全部检查通过。
+   ```
+
+5. 完成后，视频旁边会出现 `<视频名>.md` 和 `<视频名>.docx`。
 
 ```mermaid
 flowchart LR
@@ -43,8 +51,9 @@ flowchart LR
 4. [在 Colab T4 GPU 上生成字幕](#在-colab-t4-gpu-上生成字幕)
 5. [视频上下文（可选）](#视频上下文可选)
 6. [质量保证](#质量保证)
-7. [配置](#配置)
-8. [开发与测试](#开发与测试)
+7. [常见问题](#常见问题)
+8. [配置](#配置)
+9. [开发与测试](#开发与测试)
 
 ---
 
@@ -88,13 +97,8 @@ video-notes doctor                         # 检查 FFmpeg、Python 依赖、pan
 ### 在 Claude / Codex 应用里使用（推荐）
 
 1. 打开 **Claude 桌面版 → Code**，或 **Codex 桌面版**，选择视频所在的文件夹作为工作目录。
-2. 在对话里输入，例如：
-
-   ```text
-   用 video-notes 把这个文件夹里的视频整理成笔记：先运行 video-notes prepare，按每章 brief.md 写好 topics.csv、knowledge.csv、chapter.md 和 review.md，再运行 video-notes assemble，直到全部检查通过。
-   ```
-
-3. AI 依次完成每一章；`assemble` 通过后给出笔记路径。长视频可以分几次对话完成，资料包和已写好的章节都保存在工作目录里。
+2. 发送“快速开始”第 4 步中的那段话。
+3. AI 依次完成每一章；`assemble` 通过后给出笔记路径。长视频可以分几次对话完成，资料包和已写好的章节都会保留，新对话里说“继续写还没完成的章节，然后运行 video-notes assemble”即可。
 
 ### 在终端里使用
 
@@ -105,7 +109,7 @@ video-notes assemble "课程.mp4"      # 写完所有章节后运行
 video-notes assemble "课程.mp4" --output D:\notes   # 输出到其他文件夹
 ```
 
-`prepare` 为每章生成 `agent/Cnn/brief.md`，内容包括通用写作规则、视频上下文、本章字幕、候选截图表（时间、显示期间的字幕、原图路径）和联系表。写作者在同一文件夹写下面四个文件：
+`prepare` 结束时会显示资料包所在的文件夹（内部记录中的 `agent/`）：那里的 `README.md` 列出所有章节，每章一个子文件夹 `Cnn/`，其中的 `brief.md` 包括通用写作规则、视频上下文、本章字幕、候选截图表（时间、显示期间的字幕、原图路径）和联系表。写作者在同一子文件夹写下面四个文件：
 
 | 文件 | 内容 |
 | --- | --- |
@@ -124,6 +128,7 @@ video-notes assemble "课程.mp4" --output D:\notes   # 输出到其他文件夹
 ```
 
 - 原视频和字幕只读，绝不修改。
+- 视频旁还会出现一个 `.work` 文件夹，存放画面检测缓存、候选截图和资料包；笔记完成后可以删除（删除后再次处理同一视频需要重新检测画面）。
 - 如果你手工修改过上次生成的笔记，重新组装**不会覆盖**它，新结果另存为带时间戳的文件。
 - Windows 路径超过 260 个字符时，文件名会自动缩短，并在提示中说明。
 
@@ -198,6 +203,17 @@ forbid: 讲者, 本视频
 
 - 没有独立审查者：程序能核对格式、覆盖和自查记录是否完整，但无法判断技术内容是否写对，这取决于写作的 AI 是否认真对照了字幕和原图。
 - 重要场合请人工抽查关键章节，特别是命令、地址和数值。
+
+---
+
+## 常见问题
+
+- **提示找不到 `video-notes` 命令**：安装时没有加 `-AddToPath`，或者终端 / 应用是在安装前打开的。重新打开终端，或完全退出并重新打开 Claude / Codex 应用。
+- **`assemble` 没有通过**：每章的原因写在资料包文件夹的 `check.md`（例如某段字幕没有归属、某个重要知识点没写、正文太简略、自查记录缺了某张图）。把它交给 AI 修改对应章节，再运行一次 `assemble`。
+- **中途中断了**：再次运行同一条命令即可。画面检测和截图已缓存，已写好的章节文件不会丢失。
+- **需要多长时间**：`prepare` 首次运行大约是视频时长的 1/5 到 1/3（主要是画面检测），之后复用缓存。写作在对话里进行，消耗的是对话本身的额度，大致与视频长度成正比；两小时以上的视频建议分几次对话完成。
+- **没有字幕**：用下面的 Colab 方法生成，或安装本地语音识别后由 `prepare` 自动转写。
+- **想要英文或其他语言的笔记**：`video-notes setup --language English`，或在视频上下文里写 `note_language`。
 
 ---
 

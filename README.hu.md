@@ -13,6 +13,8 @@ Helyi előadás-, kurzus- vagy képzésvideóból **megosztható tanulási jegyz
 
 ## Gyors kezdés
 
+Szükséges: Python 3.10+, FFmpeg és git (Windows: futtasd egymás után: `winget install Python.Python.3.12`, `winget install Gyan.FFmpeg`, `winget install Git.Git`; git nélkül a GitHub-oldalról letöltheted és kicsomagolhatod a ZIP-et).
+
 1. Telepítés (egyszer):
 
 ```bash
@@ -21,9 +23,15 @@ cd video-notes
 powershell -ExecutionPolicy Bypass -File install.ps1 -AddToPath   # macOS/Linux: sh install.sh
 ```
 
-2. Tedd a videót (és opcionálisan az azonos nevű `.srt` feliratot) egy mappába.
-3. Nyisd meg a mappát a Claude asztali alkalmazásban (Code) vagy a Codex asztali alkalmazásban, és kérd az MI-t: „Készíts jegyzetet ebből a videóból a video-notes segítségével”.
-4. Az MI futtatja a `video-notes prepare` parancsot, fejezetenként megír, majd futtatja a `video-notes assemble` parancsot; a Markdown és a Word változat a videó mellett jelenik meg.
+2. **Lépj ki teljesen és nyisd meg újra** a Claude vagy Codex alkalmazást, hogy megtalálja az újonnan telepített `video-notes` parancsot.
+3. Tedd a videót (és opcionálisan az azonos nevű `.srt` feliratot) egy mappába.
+4. Nyisd meg a mappát az alkalmazásban (a Claude asztali alkalmazásban a **Code** lapon), és küldd el az MI-nek változtatás nélkül ezt a szöveget:
+
+   ```text
+   Készíts jegyzetet a mappában lévő videóból a video-notes segítségével: futtasd a video-notes prepare parancsot, olvasd el a kiírt csomagleírást, minden fejezethez írd meg a brief.md alapján a topics.csv, knowledge.csv, chapter.md és review.md fájlt, majd futtasd a video-notes assemble parancsot, amíg minden ellenőrzés sikeres.
+   ```
+
+5. Ha elkészült, a videó mellett megjelenik a `<videó neve>.md` és a `<videó neve>.docx`.
 
 ```mermaid
 flowchart LR
@@ -43,8 +51,9 @@ flowchart LR
 4. [Feliratok készítése Colab T4 GPU-n](#feliratok-készítése-colab-t4-gpu-n)
 5. [Videókontextus (opcionális)](#videókontextus-opcionális)
 6. [Minőségbiztosítás](#minőségbiztosítás)
-7. [Beállítások](#beállítások)
-8. [Fejlesztés és tesztek](#fejlesztés-és-tesztek)
+7. [Gyakori kérdések](#gyakori-kérdések)
+8. [Beállítások](#beállítások)
+9. [Fejlesztés és tesztek](#fejlesztés-és-tesztek)
 
 ---
 
@@ -88,13 +97,8 @@ video-notes doctor                         # ellenőrzi az FFmpeg-et, a Python-f
 ### A Claude / Codex alkalmazásban (ajánlott)
 
 1. Nyisd meg a **Claude asztali → Code** lapot vagy a **Codex asztali alkalmazást**, és válaszd munkamappának a videót tartalmazó mappát.
-2. Írd be a beszélgetésbe például:
-
-   ```text
-   Készíts jegyzetet a mappában lévő videóból a video-notes segítségével: futtasd a video-notes prepare parancsot, minden fejezethez írd meg a brief.md alapján a topics.csv, knowledge.csv, chapter.md és review.md fájlt, majd futtasd a video-notes assemble parancsot, amíg minden ellenőrzés sikeres.
-   ```
-
-3. Az MI egymás után elkészíti a fejezeteket, és az `assemble` sikere után megadja a jegyzet útvonalát. Hosszú videó több beszélgetésben is elkészülhet: a csomagok és a már megírt fejezetek a munkamappában maradnak.
+2. Küldd el a gyors kezdés 4. lépésében szereplő szöveget.
+3. Az MI egymás után elkészíti a fejezeteket, és az `assemble` sikere után megadja a jegyzet útvonalát. Hosszú videó több beszélgetésben is elkészülhet: a csomagok és a már megírt fejezetek megmaradnak; új beszélgetésben mondd: „folytasd a még kész nem lévő fejezeteket, majd futtasd a video-notes assemble parancsot”.
 
 ### Terminálból
 
@@ -105,7 +109,7 @@ video-notes assemble "kurzus.mp4"    # miután minden fejezet elkészült
 video-notes assemble "kurzus.mp4" --output D:\jegyzetek   # kimenet másik mappába
 ```
 
-A `prepare` minden fejezethez megírja az `agent/Cnn/brief.md` csomagot: az általános írási szabályokat, a videókontextust, a fejezet feliratait, a jelöltek táblázatát (idő, közben látható feliratok, eredeti kép útvonala) és az áttekintő lapokat. Az író ugyanabba a mappába négy fájlt ír:
+A `prepare` a végén kiírja a csomagok mappáját (a belső naplók `agent/` mappáját): az ottani `README.md` felsorolja a fejezeteket, és minden fejezetnek van egy `Cnn/` almappája, amelynek `brief.md` fájlja tartalmazza az általános írási szabályokat, a videókontextust, a fejezet feliratait, a jelöltek táblázatát (idő, közben látható feliratok, eredeti kép útvonala) és az áttekintő lapokat. Az író ugyanabba az almappába négy fájlt ír:
 
 | Fájl | Tartalom |
 | --- | --- |
@@ -124,6 +128,7 @@ A `prepare` minden fejezethez megírja az `agent/Cnn/brief.md` csomagot: az ált
 ```
 
 - Az eredeti videó és felirat csak olvasható, soha nem módosul.
+- A videó mellett egy `.work` mappa is megjelenik a képernyőfelismerési gyorsítótárral, a jelölt képkockákkal és a csomagokkal; a jegyzet elkészülte után törölhető (ugyanannak a videónak az újabb feldolgozásakor a képernyőfelismerés ekkor újra lefut).
 - Ha kézzel módosítottad a korábban készült jegyzetet, az újabb összeállítás **nem írja felül**; az új eredmény időbélyeges néven kerül mentésre.
 - Ha egy Windows-útvonal 260 karakternél hosszabb lenne, a fájlnevek automatikusan rövidülnek, és erről üzenet szól.
 
@@ -198,6 +203,17 @@ A feliratban szereplő "rafting" a Raft felismerési hibája. Az előadás előt
 
 - Nincs független áttekintő: a program ellenőrzi a formátumot, a lefedettséget és az önellenőrzési napló teljességét, de azt nem tudja megítélni, hogy a szakmai tartalom helyes-e; ez azon múlik, hogy az író MI gondosan összevetette-e a feliratokkal és az eredeti képekkel.
 - Fontos anyagoknál nézd át magad a kulcsfejezeteket, különösen a parancsokat, címeket és számokat.
+
+---
+
+## Gyakori kérdések
+
+- **A `video-notes` parancs nem található**: a telepítés `-AddToPath` nélkül történt, vagy a terminált / alkalmazást a telepítés előtt nyitottad meg. Nyiss új terminált, vagy lépj ki teljesen a Claude / Codex alkalmazásból, és nyisd meg újra.
+- **Az `assemble` nem sikerült**: a fejezetenkénti okok a csomagmappa `check.md` fájljában vannak (például egy feliratsor nem tartozik szakaszhoz, hiányzik egy fontos tudáselem, túl rövid a szöveg, egy képhez hiányzik az önellenőrzési sor). Add oda az MI-nek, javíttasd vele azokat a fejezeteket, és futtasd újra az `assemble` parancsot.
+- **Megszakadt**: futtasd újra ugyanazt a parancsot. A képernyőfelismerés és a képkockák gyorsítótárban vannak, a már megírt fejezetfájlok nem vesznek el.
+- **Mennyi ideig tart**: az első `prepare` nagyjából a videó hosszának ötöde-harmada (főleg a képernyőfelismerés); a későbbi futások a gyorsítótárat használják. Az írás a beszélgetésben történik, és a beszélgetés saját keretét fogyasztja, nagyjából a videó hosszával arányosan; két óránál hosszabb videóknál használj több beszélgetést.
+- **Nincs felirat**: készítsd el az alábbi Colab-módszerrel, vagy telepíts helyi beszédfelismerést, és a `prepare` automatikusan átírja.
+- **Angol vagy más nyelvű jegyzetet szeretnék**: `video-notes setup --language English`, vagy add meg a `note_language` értéket a videókontextusban.
 
 ---
 

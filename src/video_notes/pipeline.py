@@ -340,8 +340,10 @@ class Pipeline:
             (agent / 'chapters.json').write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding='utf-8')
             lines = ['# Agent briefs', '', f'video: {self.video}', f'work: {self.work}',
                      f'note language: {self.language}', '',
-                     'For each chapter read brief.md, write topics.csv, knowledge.csv and chapter.md into the same '
-                     'folder, then run `video-notes assemble` with the same arguments. Warnings:']
+                     'For each chapter folder below: read brief.md, then write topics.csv, knowledge.csv, chapter.md '
+                     'and review.md into the same folder. When every chapter is written, run `video-notes assemble` '
+                     'with the same arguments as prepare; failing chapters and the reasons are listed in check.md.',
+                     '', 'Warnings:']
             lines += [f'- {w}' for w in self.warnings or ['none']] + ['', '| chapter | time | cues | candidates |',
                                                                       '|---|---|---|---|']
             lines += [f"| {c['chapter']} | {c['start']}–{c['end']} | C{c['first_cue']}–C{c['last_cue']} | "

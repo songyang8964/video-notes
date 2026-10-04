@@ -139,7 +139,9 @@ def main(argv=None):
         if mode == 'prepare':
             agent = pipeline.agent_prepare()
             print(agent, flush=True)
-            log(f'briefs ready in {agent}; write each chapter there, then run video-notes assemble')
+            log(f'briefs ready: read {agent / "README.md"}; for each chapter write topics.csv, knowledge.csv, '
+                f'chapter.md and review.md next to its brief.md, then run: video-notes assemble'
+                + (f' "{video.name}"' if args.video else ''))
             return 0
         note, problems = pipeline.agent_assemble()
     except KeyboardInterrupt:

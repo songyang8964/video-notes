@@ -13,6 +13,8 @@ Turn a local lecture, course or training video into a **shareable study note wit
 
 ## Quick start
 
+You need Python 3.10+, FFmpeg and git (Windows: run `winget install Python.Python.3.12`, `winget install Gyan.FFmpeg` and `winget install Git.Git`; without git you can download the ZIP from the GitHub page and unpack it).
+
 1. Install (once):
 
 ```bash
@@ -21,9 +23,15 @@ cd video-notes
 powershell -ExecutionPolicy Bypass -File install.ps1 -AddToPath   # macOS/Linux: sh install.sh
 ```
 
-2. Put the video (and, optionally, a `.srt` subtitle with the same name) in a folder.
-3. Open that folder in Claude desktop (Code) or the Codex desktop app and tell the AI: "Use video-notes to turn this video into notes".
-4. The AI runs `video-notes prepare`, writes the chapters one by one, then runs `video-notes assemble`; the Markdown and Word versions appear next to the video.
+2. **Quit and reopen** the Claude or Codex app completely so that it finds the newly installed `video-notes` command.
+3. Put the video (and, optionally, a `.srt` subtitle with the same name) in a folder.
+4. Open that folder in the app (in Claude desktop choose **Code**) and send the AI this text as it is:
+
+   ```text
+   Use video-notes to turn the video in this folder into notes: run video-notes prepare, read the brief instructions it prints, write topics.csv, knowledge.csv, chapter.md and review.md for each chapter following its brief.md, then run video-notes assemble until every check passes.
+   ```
+
+5. When it is done, `<video name>.md` and `<video name>.docx` appear next to the video.
 
 ```mermaid
 flowchart LR
@@ -43,8 +51,9 @@ flowchart LR
 4. [Generating subtitles on a Colab T4 GPU](#generating-subtitles-on-a-colab-t4-gpu)
 5. [Video context (optional)](#video-context-optional)
 6. [Quality assurance](#quality-assurance)
-7. [Configuration](#configuration)
-8. [Development and tests](#development-and-tests)
+7. [FAQ](#faq)
+8. [Configuration](#configuration)
+9. [Development and tests](#development-and-tests)
 
 ---
 
@@ -88,13 +97,8 @@ video-notes doctor                         # checks FFmpeg, Python dependencies,
 ### In the Claude / Codex app (recommended)
 
 1. Open **Claude desktop → Code**, or the **Codex desktop app**, and choose the folder that holds the video as the working folder.
-2. Type in the conversation, for example:
-
-   ```text
-   Use video-notes to turn the video in this folder into notes: run video-notes prepare, write topics.csv, knowledge.csv, chapter.md and review.md for each chapter following its brief.md, then run video-notes assemble until every check passes.
-   ```
-
-3. The AI completes the chapters one by one and gives you the note's path once `assemble` passes. Long videos can be done over several conversations: the briefs and the chapters already written stay in the work folder.
+2. Send the text from step 4 of the quick start.
+3. The AI completes the chapters one by one and gives you the note's path once `assemble` passes. Long videos can be done over several conversations: the briefs and the chapters already written are kept; in a new conversation say "continue the unfinished chapters, then run video-notes assemble".
 
 ### In a terminal
 
@@ -105,7 +109,7 @@ video-notes assemble "course.mp4"    # after all chapters are written
 video-notes assemble "course.mp4" --output D:\notes   # write to another folder
 ```
 
-`prepare` writes `agent/Cnn/brief.md` for every chapter: the general writing rules, the video context, the chapter's subtitles, the candidate table (time, subtitles shown meanwhile, original image path) and contact sheets. The writer puts four files in the same folder:
+When `prepare` finishes it shows the folder with the briefs (`agent/` in the internal records): its `README.md` lists all chapters, and each chapter has a subfolder `Cnn/` whose `brief.md` contains the general writing rules, the video context, the chapter's subtitles, the candidate table (time, subtitles shown meanwhile, original image path) and contact sheets. The writer puts four files in the same subfolder:
 
 | File | Content |
 | --- | --- |
@@ -124,6 +128,7 @@ video-notes assemble "course.mp4" --output D:\notes   # write to another folder
 ```
 
 - The original video and subtitles are read-only and never modified.
+- A `.work` folder also appears next to the video with the detection cache, candidate screenshots and briefs; it can be deleted once the note is done (processing the same video again then repeats the screen detection).
 - If you edited the previously generated note, assembling again **does not overwrite** it; the new result is saved with a timestamp.
 - When a Windows path would exceed 260 characters, the file names are shortened automatically and a message says so.
 
@@ -198,6 +203,17 @@ This lecture is about consensus algorithms. Write the terms as Raft, Paxos, Lead
 
 - There is no independent reviewer: the program checks format, coverage and that the self-review record is complete, but it cannot tell whether the technical content is right; that depends on the writing AI comparing carefully with the subtitles and the original images.
 - For important material, spot-check the key chapters yourself, especially commands, addresses and numbers.
+
+---
+
+## FAQ
+
+- **`video-notes` is not found**: it was installed without `-AddToPath`, or the terminal / app was opened before the installation. Open a new terminal, or quit and reopen the Claude / Codex app completely.
+- **`assemble` did not pass**: the reasons per chapter are in `check.md` in the brief folder (for example a subtitle line without a section, a missing important knowledge item, text that is too brief, a missing self-review line for an image). Give it to the AI to fix those chapters and run `assemble` again.
+- **It was interrupted**: run the same command again. Screen detection and screenshots are cached, and chapter files already written are not lost.
+- **How long does it take**: the first `prepare` takes roughly a fifth to a third of the video's length (mostly screen detection); later runs reuse the cache. Writing happens in the conversation and uses the conversation's own quota, roughly in proportion to the video's length; for videos over two hours, use several conversations.
+- **There are no subtitles**: generate them with the Colab method below, or install local speech recognition and `prepare` transcribes automatically.
+- **I want notes in English or another language**: `video-notes setup --language English`, or set `note_language` in the video context.
 
 ---
 
