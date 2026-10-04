@@ -116,23 +116,23 @@ Megjegyzés: az asztali alkalmazásban történt bejelentkezés csak az alkalmaz
 "%LOCALAPPDATA%\OpenAI\Codex\bin\codex.exe" login
 ```
 
-#### Futtatás az asztali alkalmazás beszélgetéséből
+#### Használat az asztali alkalmazás beszélgetéséből (ügynökmód, ajánlott)
 
-Terminál nélkül is megy: az asztali alkalmazás MI-je futtathatja helyetted.
+A Claude asztali vagy a Codex asztali alkalmazás beszélgetésében a beszélgetés MI-je **maga** olvassa a feliratokat, nézi a képeket és ír; a `video-notes` csak a modellt nem igénylő lépéseket végzi (felismerés, fejezetek, képkockák, gépi ellenőrzés, összeállítás). Nem indul `claude` / `codex` CLI, nem kell külön bejelentkezni, és ugyanazok a feliratok és képek nem kerülnek újra meg újra a modellhez.
 
 1. Nyisd meg a **Claude asztali → Code** lapot vagy a **Codex asztali alkalmazást**, és válaszd munkamappának a videót tartalmazó mappát.
 2. Írd be a beszélgetésbe például:
 
    ```text
-   Futtasd a video-notes parancsot ebben a mappában. Ha kész, add meg a jegyzet útvonalát, és foglald össze a report.md-ben szereplő sikertelen fejezeteket és korlátozásokat.
+   Készíts jegyzetet a mappában lévő videóból a video-notes ügynökmódjával: futtasd a video-notes prepare parancsot, minden fejezethez írd meg a brief.md alapján a topics.csv, knowledge.csv, chapter.md és review.md fájlt, majd futtasd a video-notes assemble parancsot, amíg minden ellenőrzés sikeres.
    ```
 
-3. Az MI ugyanazt a `video-notes` parancsot futtatja, és visszaolvassa neked az eredményt és a jelentést.
+3. Az MI egymás után elkészíti a fejezeteket, és megadja a jegyzet útvonalát.
 
 Megjegyzések:
 
-- Az MI csak lefuttatja helyetted a parancsot; a modellhívásokat továbbra is a fent megtalált CLI végzi, ezért a fenti egyszeri bejelentkezés itt is szükséges.
-- A két óránál hosszabb videók órákig futnak; a beszélgetést tartsd nyitva. Hosszú videóknál kényelmesebb a saját terminálban futtatni. Megszakadás esetén futtasd újra, és ott folytatja, ahol abbahagyta.
+- Ne kérd a beszélgetés MI-jét, hogy futtassa a `video-notes` parancsot (automatikus mód) és figyelje a haladását: így a beszélgetés és a CLI is fogyasztja a keretet, és ugyanazt a tartalmat kétszer dolgozza fel. Felügyelet nélküli futtatáshoz használd a saját terminálodat.
+- Hosszú videó több beszélgetésben is elkészülhet: a csomagok és a már megírt fejezetek a munkamappában maradnak, az `assemble` megnevezi a hiányzó vagy hibás fejezeteket.
 
 Opcionális:
 
@@ -197,6 +197,7 @@ video-notes "kurzus.mp4" --srt "felirat.srt"
 video-notes "kurzus.mp4" --backend codex          # most a másik modellel
 video-notes "kurzus.mp4" --output D:\jegyzetek    # kimeneti gyökérmappa (alapértelmezés ./output)
 video-notes "kurzus.mp4" --context hatter.md      # videókontextus fájl
+video-notes "kurzus.mp4" --fallback-backend codex  # a Claude keretének kimerülésekor a Codex folytatja
 ```
 
 3. Az előrehaladás a terminálban látszik (stderr); az utolsó sor (stdout) a jegyzet útvonala.
@@ -219,6 +220,17 @@ Szabályok:
 - Online hivatkozások (http/https) még nem támogatottak; előbb töltsd le a videót.
 - Az eredeti videó és a felirat csak olvasható, soha nem módosul.
 - Ha kézzel szerkesztetted a korábban elkészült `培训笔记.md` fájlt, az új futás **nem írja felül**; az új eredmény `培训笔记.<idő>.md` néven kerül mentésre.
+
+### Ügynökmód: prepare / assemble
+
+```bash
+video-notes prepare "kurzus.mp4"    # ellenőrzés, fejezetek, jelölt képkockák; fejezetenként egy brief.md (modellhívás nélkül)
+video-notes assemble "kurzus.mp4"   # ugyanazok a gépi ellenőrzések, mint automatikus módban; csak hibátlanul állít össze (modellhívás nélkül)
+```
+
+- A `prepare` minden fejezet csomagját a munkamappa `agent/Cnn/brief.md` fájljába írja: az általános írási szabályok, a fejezet feliratai, a jelöltek táblázata (idő, közben látható feliratok, eredeti kép útvonala) és az áttekintő lapok.
+- Az író (a beszélgetés MI-je vagy egy ember) ugyanabba a mappába írja a `topics.csv`, `knowledge.csv` és `chapter.md` fájlt (az automatikus móddal azonos formátumban), valamint a `review.md` önellenőrzési naplót: mit ellenőrzött az eredetin minden beszúrt képnél, és hol van kifejtve minden fontos tudáselem.
+- Ha az `assemble` sikertelen, a fejezetek hibáit az `agent/check.md` fájlba írja, és nem ad ki jegyzetet; javítás után futtasd újra.
 
 ### Kilépési kódok
 
@@ -441,11 +453,11 @@ A modell a feliratok, a tudásleltár és a kiválasztott eredeti képek alapjá
 
 ### 8. Ellenőrzés, áttekintés és javítás
 
-Lásd: [Minőségbiztosítás](#minőségbiztosítás). Ha a gépi ellenőrzés vagy az áttekintés sikertelen, a modell a hibalistával javít, legfeljebb 2 körben.
+Lásd: [Minőségbiztosítás](#minőségbiztosítás). Az áttekintés a hibákat „blokkoló” (hibás tény, szám vagy parancs, hiányzó fontos tudás, kép és szöveg eltérése, megalapozatlan következtetés, közvetítés) és „javaslat” (megfogalmazás) csoportba sorolja. Csak a blokkoló hibák vagy a sikertelen gépi ellenőrzés indít javítást; javítás után csak az előző kör blokkoló hibáit és a javítás által okozott új hibákat ellenőrzi újra, legfeljebb 2 körben.
 
 ### 9. A teljes dokumentum áttekintése
 
-Miután minden fejezet elkészült, a modell végigolvassa a teljes dokumentumot, és ellenőrzi a fejezetek közötti átmeneteket, a fogalmak és számok egységességét, a fontos tudás lefedettségét és a **fejezeteken átívelő ismétlődő képeket** (a program előbb megkeresi az ugyanannak a diának tűnő képpárokat). A hibákat fejezetenként javítja; a javított fejezetnek is át kell mennie a gépi ellenőrzésen, különben az előző változat marad meg, és ez bekerül a jelentésbe.
+Miután minden fejezet elkészült, a modell végigolvassa a teljes dokumentumot, és ellenőrzi a fejezetek közötti átmeneteket, a fogalmak egységességét és a fontos tudás lefedettségét. Ez a kör nem lát képeket, ezért nem kérheti a számok „egységesítését”: különböző rendelkezésre állási zónák, eszközök vagy példák jogosan használhatnak eltérő értékeket. Az ismétlődő képeket már írás közben kezeli: minden fejezet írása és áttekintése megkapja a korábbi fejezetekben beszúrt képek listáját. A hibákat fejezetenként javítja; a javított fejezetnek is át kell mennie a gépi ellenőrzésen, különben az előző változat marad meg, és ez bekerül a jelentésbe.
 
 ### 10. Kimenet
 
@@ -465,6 +477,7 @@ Minden egyetlen Markdown fájlba kerül, a kiválasztott eredeti képek az `asse
 | Tudáslefedettség | Minden fontos tudáselemnek egy létező szakaszra kell mutatnia a „tudástérképen”, vagy kizárási indoklással kell rendelkeznie |
 | Részletesség | Szöveges karakterek (címek, kódblokkok és képek nélkül) ≥ 100 a magyarázat minden percére (állítható); a legalább 1 perces szakaszokban ≥ 50 percenként. Megállítja az összefoglalóként megírt fejezeteket |
 | Írásmód | Nem lehet benne „az előadó / a beszélő / a videó megemlíti / a felirat szerint” típusú közvetítés, sem a kontextus `forbid` szavai |
+| Belső azonosítók | A szövegben nem lehet C01, Chapter 8 vagy képkocka-azonosító típusú belső azonosító; a korábbi részekre a címükkel kell hivatkozni |
 | Formátum | Minden fejezetnek van címe; nincs nyers képútvonal, nincs páratlan kódblokk; az összeállítás után nem marad helyőrző |
 
 A fejezetenkénti ellenőrzési és javítási kör:
@@ -472,23 +485,25 @@ A fejezetenkénti ellenőrzési és javítási kör:
 ```mermaid
 flowchart TD
     W["Írás"] --> C["Gépi ellenőrzés"]
-    C --> R["Független áttekintés"]
-    R --> J{"Minden rendben?"}
-    J -- igen --> OK["A fejezet kész"]
-    J -- nem --> F["Javítás"]
+    C --> R["Független áttekintés<br/>blokkoló / javaslat"]
+    R --> J{"Van blokkoló hiba?"}
+    J -- nem --> OK["A fejezet kész"]
+    J -- igen --> F["Javítás, csak a blokkolók újraellenőrzése"]
     F --> C
     F -. 2 kör után is sikertelen .-> REP["Elkészül így is<br/>hibák a jelentésben"]
 ```
 
 ### Modellalapú áttekintés
 
-- **Független fejezetenkénti áttekintés**: az áttekintő megkapja a feliratokat, a tudásleltárt, a kiválasztott eredeti képeket és a vázlatot, és ellenőrzi, hogy a fontos tudás teljesen ki van-e fejtve (egy kulcsszó nem elég), a tények és számok egyeznek-e a feliratokkal és a képekkel, minden kép alátámasztja-e a mellette lévő szöveget, sérülnek-e a képszabályok, és van-e közvetítő vagy témán kívüli tartalom.
-- **A teljes dokumentum áttekintése**: fejezetek közötti átmenetek, fogalmak és számok egységessége, a fontos tudás lefedettsége, fejezeteken átívelő ismétlődő képek.
+- **Független fejezetenkénti áttekintés**: az áttekintő megkapja a feliratokat, a tudásleltárt, a kiválasztott eredeti képeket, a korábbi fejezetekben beszúrt képek listáját és a vázlatot, és a hibákat blokkoló és javaslat csoportba sorolja: teljesen ki van-e fejtve a fontos tudás (egy kulcsszó nem elég), egyeznek-e a tények és számok a feliratokkal és a képekkel, alátámasztja-e minden kép a mellette lévő szöveget, sérülnek-e a képszabályok (a fejezetek közötti ismétlést is beleértve), van-e közvetítő vagy témán kívüli tartalom.
+- **Újraellenőrzés**: javítás után csak az előző kör blokkoló hibáit és a javítás által okozott hibákat nézi; nincs újabb teljes áttekintés, amely korábban a végtelenségig új megfogalmazási megjegyzéseket hozott.
+- **A teljes dokumentum áttekintése**: fejezetek közötti átmenetek, fogalmak egységessége, a fontos tudás lefedettsége.
 
 ### Korlátok
 
 - Az áttekintést is nagy nyelvi modell végzi. A nyilvánvaló hiányokat, hibákat és formai problémákat észreveszi, de nem helyettesíti az emberi ellenőrzést.
 - Az, hogy „tényleg kulcsfontosságú-e ez a kép” és „jól javította-e ki ezt a felismerési hibát”, végső soron a modellen múlik; fontos anyagoknál szúrópróbaszerűen nézd át a `report.md` által jelzett fejezeteket.
+- Az ügynökmódban nincs független áttekintő: az `assemble` csak a gépileg ellenőrizhető dolgokat és azt tudja ellenőrizni, hogy a `review.md` minden képhez és minden fontos tudáselemhez tartalmaz-e ellenőrzési bejegyzést; hogy ezek valóban megtörténtek-e, az írón múlik.
 
 ---
 
@@ -497,22 +512,25 @@ flowchart TD
 ```
 <aktuális mappa>/
   output/<videó neve>/培训笔记.md  + assets/      ← megosztásra
-  .work/video-notes/<videó neve>-<hash>/          ← belső naplók, törölhetők (a folytatási gyorsítótár elvész)
+  .work/video-notes/<hash>/                       ← belső naplók, törölhetők (a folytatási gyorsítótár elvész)
     source.json            bemeneti hash-ek, a felirat forrása és a választás oka, modell
     detect/                képernyőfelismerési jelek és eredmény-gyorsítótár
-    C01/ C02/ ...          fejezetenként: témakörök, tudásleltár, jelöltek és indoklás, képválasztás, vázlat, áttekintés
-    model-calls/           minden modellhívás teljes promptja, válasza és naplója
+    C01/ C02/ ...          fejezetenként: témakörök, tudásleltár, jelöltek és indoklás, képválasztás, vázlat, áttekintés, ellenőrzőpont
+    agent/                 ügynökmód: fejezetenkénti brief.md, az ügynök által írt fájlok, check.md
+    model-calls/           minden modellhívás teljes promptja, válasza, naplója és valós tokenhasználata
     global-review.csv      a teljes dokumentum áttekintésének megállapításai
-    report.md              futási jelentés: fejezetenkénti eredmények, megoldatlan problémák, korlátozások, időigény
+    report.md              futási jelentés: fejezetenkénti eredmények, megoldatlan problémák, korlátozások, hívások, tokenek, időigény
 ```
 
-A `report.md` kifejezetten felsorolja a korlátozott működést, pl. hiányzó OCR, automatikus átírás használata, feliratproblémák, a gépi ellenőrzés által elutasított teljes dokumentumbeli javítás.
+Windowson, ha a videó mappájának útvonala nagyon mély (például egy értekezlet-alkalmazás felvételi mappája), a belső naplók a `%USERPROFILE%\.video-notes\work\<hash>` mappába kerülnek, hogy az útvonalak 260 karakter alatt maradjanak. Egy munkamappát egyszerre csak egy futás használhat.
+
+A `report.md` kifejezetten felsorolja a korlátozott működést, pl. hiányzó OCR, automatikus átírás használata, feliratproblémák, a kép csak egy adott időpontig dekódolható, a gépi ellenőrzés által elutasított teljes dokumentumbeli javítás.
 
 ---
 
 ## Beállítások
 
-A beállítófájl: `%APPDATA%\video-notes\config.json` (Windows) vagy `~/.config/video-notes/config.json`. A gyakori elemek a `video-notes setup` paranccsal módosíthatók; a többihez szerkeszd a JSON-t.
+A beállítófájl: `~/.video-notes/config.json` (Windows: `%USERPROFILE%\.video-notes\config.json`; a régi `%APPDATA%\video-notes\config.json` helyet továbbra is beolvassa). Nem az AppData alatt van, mert az olyan asztali alkalmazások, mint a Claude és a Codex, mind saját privát mappába irányítják át az AppData-t, így a különböző alkalmazásokból indított futások más beállításokat látnának. A gyakori elemek a `video-notes setup` paranccsal módosíthatók; a többihez szerkeszd a JSON-t.
 
 | Kulcs | Alapértelmezés | Leírás |
 | --- | --- | --- |
@@ -525,7 +543,9 @@ A beállítófájl: `%APPDATA%\video-notes\config.json` (Windows) vagy `~/.confi
 | `shortlist` | 32 | A modellnek fejezetenként mutatott különböző képek legnagyobb száma (csak fölötte szűkít) |
 | `chapter_minutes` | 10 | Célzott fejezethossz (perc) |
 | `use_adaptive` | true | A PySceneDetect kiegészítő érzékelő használata (jobb lefedés, kicsit lassabb) |
-| `review_cycles` | 2 | Javítási körök maximális száma fejezetenként |
+| `review_cycles` | 2 | „Javítás → újraellenőrzés” körök maximális száma az első áttekintés után |
+| `parallel_chapters` | 3 | Egyszerre feldolgozott fejezetek száma |
+| `fallback_backend` | üres | A keret kimerülésekor átvevő háttérrendszer (`claude` vagy `codex`); a futás elején ellenőrzi a használhatóságát |
 | `min_chars_per_minute` | 100 | A részletesség alsó határa |
 | `tesseract` / `ocr_langs` | üres / `eng` | Az OCR program útvonala és nyelvei |
 | `asr_backend` / `asr_model` / `whisperx` | automatikus / `large-v3` / üres | Helyi átírási beállítások |
@@ -545,7 +565,7 @@ Példa: egy kb. 2 óra 40 perces, 1080p felbontású, felirattal rendelkező ké
 | Modellhívások (fejezetenként kb. 5–8, plusz egy teljes dokumentum-áttekintés) | több óra, a modell sebességétől és a keretektől függően |
 
 - A képernyőfelismerés csak az első futáskor történik meg; utána a gyorsítótár teljesen újrahasznosul.
-- A modellhívások fejezetenként követik egymást; megszakítás után a kész hívások nem ismétlődnek.
+- Alapértelmezés szerint 3 fejezet fut párhuzamosan; minden modellhívás csak a képolvasó eszközt és egy rövid rendszerpromptot tölt be, a `report.md` pedig rögzíti a valós tokenhasználatot. Megszakítás után a kész hívások nem ismétlődnek (a két háttérrendszer eredményei kölcsönösen újrahasznosulnak).
 - Memória: a felismerés kockánként, folyamatosan dolgozik, így a memóriahasználat nem nő a videó hosszával. Zárd be a sok memóriát használó programokat, hogy elkerüld a memóriahiány miatti dekódolási hibákat (az eszköz újrapróbálkozik, és rögzíti őket a jelentésben).
 
 ---
@@ -555,6 +575,7 @@ Példa: egy kb. 2 óra 40 perces, 1080p felbontású, felirattal rendelkező ké
 ```bash
 python -m unittest tests.test_video_notes -v      # egységtesztek: feliratok beolvasása és választása, fejezetek, ellenőrzési szabályok, algoritmusok, kimenetvédelem
 python tests/integration_scripted.py <mappa>       # a teljes folyamat futtatása valódi videórészleten, szkriptelt modellel (valódi modellhívás nélkül)
+python tests/integration_agent_mode.py <mappa>     # ügynökmód: prepare → szkriptelt fejezetek → assemble (modellhívás nélkül)
 ```
 
 A forráskód szerkezete:
@@ -571,7 +592,8 @@ src/video_notes/
   llm.py          modell-háttérrendszerek (Claude Code CLI / Codex CLI), asztali alkalmazás keresése, gyorsítótár, újrapróbálás, bejelentkezés-ellenőrzés
   render.py       gépi ellenőrzések és összeállítás
   config.py       beállítások és videókontextus
-  prompts/        promptok minden szakaszhoz (általános szabályok, témakörök, képválasztás, írás, áttekintés, javítás, teljes áttekintés)
+  checkpoint.py   fejezetenkénti ellenőrzőpontok (tartalom-hash) a biztonságos folytatáshoz és átadáshoz
+  prompts/        promptok minden szakaszhoz (általános szabályok, témakörök, képválasztás, írás, áttekintés, újraellenőrzés, javítás, teljes áttekintés, ügynökcsomag)
 colab/transcribe.ipynb   Colab T4 GPU feliratkészítő jegyzetfüzet
 ```
 

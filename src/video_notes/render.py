@@ -6,20 +6,38 @@ from pathlib import Path
 from .srt import stamp
 
 META_PHRASES = ('讲师', '讲者', '老师提到', '视频中提到', '视频里', '根据字幕', '字幕中', '截图中', '本片段',
-                '接下来介绍', 'the speaker', 'the lecturer', 'in this video')
+                '接下来介绍', 'the speaker', 'the lecturer', 'the presenter', 'the instructor', 'the trainer',
+                'in this video', 'in the video', 'the transcript', 'the subtitles')
+INTERNAL_ID = re.compile(r'\bC\d\d(?:F\d{8}|T\d\d|K\d{3})?\b|\b[Cc]hapter \d+\b|第\s*\d+\s*章')
 PLACEHOLDER = re.compile(r'\[\[frame:([A-Za-z0-9]+)\|([^\]\n]+)\]\]')
+
+
+CJK = re.compile(r'[぀-ヿ㐀-鿿가-힯]')
+WORD = re.compile(r"[^\W_]+(?:['’.\-][^\W_]+)*")
+WORD_WEIGHT = 1.5  # one CJK character ≈ 0.65 words of the same content in English-like prose
+
+
+def is_cjk(language):
+    """Whether the note language is written in CJK characters (density is then counted per character)."""
+    text = str(language or '')
+    return bool(CJK.search(text)) or text.strip().lower() in ('chinese', 'zh', 'japanese', 'ja', 'korean', 'ko')
 
 
 def prose(text):
     return re.sub(r'<!--.*?-->', '', text, flags=re.S)
 
 
-def _prose_chars(section):
+def _prose_chars(section, cjk=True):
+    """Prose size in CJK-character units. Other scripts count words × WORD_WEIGHT so one floor
+    serves both (counting Latin letters would let English pass at about a third of the detail)."""
     text = prose(section)
     text = PLACEHOLDER.sub('', text)
     text = re.sub(r'```.*?```', '', text, flags=re.S)        # commands count, but not as prose
     text = re.sub(r'^#+ .*$', '', text, flags=re.M)          # headings are not explanation
-    return len(re.sub(r'\s', '', text))
+    if cjk:
+        return len(re.sub(r'\s', '', text))
+    words = [w for w in WORD.findall(CJK.sub(' ', text))]
+    return round(len(CJK.findall(text)) + WORD_WEIGHT * len(words))
 
 
 def check_knowledge_map(text, knowledge):
@@ -54,7 +72,7 @@ def check_knowledge_map(text, knowledge):
     return problems
 
 
-def check_density(text, cue_times, min_chapter_cpm, min_section_cpm=50):
+def check_density(text, cue_times, min_chapter_cpm, min_section_cpm=50, cjk=True):
     """Detail floor in prose characters per minute of teaching (calibrated on hand-written notes:
     chapters 138–475/min, median ~230; lowest section ~93/min). Catches summaries, not style."""
     problems, total_chars, total_min = [], 0, 0.0
@@ -63,7 +81,7 @@ def check_density(text, cue_times, min_chapter_cpm, min_section_cpm=50):
         if not m or int(m[1]) not in cue_times or int(m[2]) not in cue_times:
             continue
         minutes = (cue_times[int(m[2])][1] - cue_times[int(m[1])][0]) / 60000
-        chars = _prose_chars(section)
+        chars = _prose_chars(section, cjk)
         total_chars, total_min = total_chars + chars, total_min + minutes
         if minutes >= 1 and chars < min_section_cpm * minutes:
             title = section.splitlines()[0].lstrip('# ').strip()
@@ -76,11 +94,11 @@ def check_density(text, cue_times, min_chapter_cpm, min_section_cpm=50):
 
 
 def check_chapter(text, owned_ids, topics, frames, max_images, forbidden=(), knowledge=(), cue_times=None,
-                  min_chars_per_minute=100):
+                  min_chars_per_minute=100, cjk=True):
     """Return a list of mechanical problems (empty = pass)."""
     problems = check_knowledge_map(text, knowledge)
     if cue_times:
-        problems += check_density(text, cue_times, min_chars_per_minute)
+        problems += check_density(text, cue_times, min_chars_per_minute, cjk=cjk)
     ranges = re.findall(r'<!--\s*(?:cues|excluded-cues):\s*(\d+)\s*-\s*(\d+)', text)
     mapped = [i for a, b in ranges for i in range(int(a), int(b) + 1)]
     if mapped != list(owned_ids):
@@ -106,6 +124,10 @@ def check_chapter(text, owned_ids, topics, frames, max_images, forbidden=(), kno
         for frame_id, _ in here:
             if frame_id in lookup and (not topic or lookup[frame_id].get('topic_id') != topic['topic_id']):
                 problems.append(f'image {frame_id} placed outside its topic section')
+    internal = INTERNAL_ID.findall(PLACEHOLDER.sub('', visible))
+    if internal:
+        problems.append('internal chapter/frame IDs in prose (refer to the section title instead): '
+                        + ', '.join(sorted(set(internal))))
     for phrase in tuple(META_PHRASES) + tuple(forbidden):
         if phrase and phrase.lower() in visible.lower():
             problems.append(f'forbidden phrase in prose: {phrase}')
@@ -118,7 +140,20 @@ def check_chapter(text, owned_ids, topics, frames, max_images, forbidden=(), kno
     return problems
 
 
-def assemble(title, chapters, out_dir: Path, filename='培训笔记.md'):
+def demote_headings(text):
+    """One level deeper for every heading outside code fences. Lines such as `# To add: …` inside a
+    device-configuration block are comments of the configuration, not headings."""
+    out, fenced = [], False
+    for line in text.split('\n'):
+        if line.lstrip().startswith('```'):
+            fenced = not fenced
+        elif not fenced and re.match(r'#{1,5} ', line):
+            line = '#' + line
+        out.append(line)
+    return '\n'.join(out)
+
+
+def assemble(title, chapters, out_dir: Path, filename='培训笔记.md', cjk=True):
     """chapters: [{'text', 'frames'}] in order. Writes note + assets; returns (note_path, inserted)."""
     assets = out_dir / 'assets'
     assets.mkdir(parents=True, exist_ok=True)
@@ -127,7 +162,7 @@ def assemble(title, chapters, out_dir: Path, filename='培训笔记.md'):
         text = re.sub(r'<!--.*?-->\n?', '', chapter['text'], flags=re.S).strip()
         if not text:
             continue
-        text = re.sub(r'^(#{1,5}) ', r'#\1 ', text, flags=re.M)
+        text = demote_headings(text)
         lookup = {f['frame_id']: f for f in chapter['frames']}
 
         def render(match):
@@ -135,11 +170,23 @@ def assemble(title, chapters, out_dir: Path, filename='培训笔记.md'):
             name = match[1] + '.jpg'
             shutil.copy2(frame['path'], assets / name)
             inserted.append(dict(frame, caption=match[2]))
-            return f'![{match[2]}](assets/{name})\n\n*{match[2]}（原视频 {stamp(frame["actual_ms"])}）*'
+            when = stamp(frame['actual_ms'])
+            source = f'（原视频 {when}）' if cjk else f' (source video {when})'
+            return f'![{match[2]}](assets/{name})\n\n*{match[2]}{source}*'
         body.append(PLACEHOLDER.sub(render, text))
     note = f'# {title}\n\n' + '\n\n'.join(body) + '\n'
     if '[[frame:' in note:
         raise ValueError('unresolved image placeholder')
+    # Images left over from an earlier assembly (e.g. a duplicate removed in review) would ship with the
+    # shared folder; only files this tool writes (frame-ID names) are removed, and never one that another
+    # note in the folder still shows (a note the user edited is kept beside the new one).
+    used = {f"{f['frame_id']}.jpg" for f in inserted}
+    for other in out_dir.glob('*.md'):
+        if other.name != filename:
+            used |= set(re.findall(r'\]\(assets/([^)\s]+)\)', other.read_text(encoding='utf-8', errors='replace')))
+    for stale in assets.glob('*.jpg'):
+        if re.fullmatch(r'C\d\dF\d+\.jpg', stale.name) and stale.name not in used:
+            stale.unlink()
     path = out_dir / filename
     path.write_text(note, encoding='utf-8')
     return path, inserted

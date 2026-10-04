@@ -85,6 +85,13 @@ def measured_fps(time_series):
     return 1.0 / float(np.median(steps)) if len(steps) else 25.0
 
 
+def picture_end(video: Path, cache_dir: Path, log=print):
+    """End of the decodable picture in seconds (last decoded frame + one frame). Shorter than the
+    container duration when the recording has a damaged tail; no frame is taken after it."""
+    times = measured_signals(video, cache_dir, log)['time_series']
+    return float(times[-1]) + 1.0 / measured_fps(times)
+
+
 def _stable_time(video, t0, duration, offset=1.5, retry=1.0, ssim_threshold=0.97):
     from skimage.metrics import structural_similarity as ssim
     t = min(t0 + offset, duration - 0.05)

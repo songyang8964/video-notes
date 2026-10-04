@@ -4,6 +4,7 @@
     video-notes lecture.mp4 [--srt subs.srt] [--output DIR] [--context ctx.md] [--backend claude|codex]
     video-notes setup [--backend claude|codex] [--model NAME] [--tesseract PATH] ...
     video-notes doctor
+    video-notes prepare [video] / video-notes assemble [video]   # agent mode: no model calls
 
 Exit codes: 0 success, 2 input/argument ambiguity, 1 dependency/model/processing/acceptance
 failure, 130 interrupted. Progress and errors go to stderr; the final note path to stdout.
@@ -120,6 +121,9 @@ def main(argv=None):
         parser.add_argument('--codex-path', help='codex executable, e.g. the copy inside the Codex desktop app')
         parser.add_argument('--language', dest='output_language', help='note language, e.g. 中文 or English')
         parser.add_argument('--max-images', type=int)
+        parser.add_argument('--fallback-backend', choices=['claude', 'codex'],
+                            help='backend that takes over automatically when the main one reaches its usage limit')
+        parser.add_argument('--parallel-chapters', type=int, help='chapters processed at the same time (default 3)')
         parser.add_argument('--tesseract', help='path to tesseract.exe (optional)')
         parser.add_argument('--ocr-langs', help='Tesseract languages, e.g. eng+chi_sim')
         parser.add_argument('--asr-backend', choices=['whisperx', 'faster-whisper', 'openai-whisper'])
@@ -135,15 +139,23 @@ def main(argv=None):
         print(f'saved {path}')
         return doctor()
 
-    parser = argparse.ArgumentParser(prog='video-notes', description=(
+    mode = argv[0] if argv[:1] in (['prepare'], ['assemble']) else None
+    if mode:
+        argv = argv[1:]
+    parser = argparse.ArgumentParser(prog='video-notes' + (f' {mode}' if mode else ''), description=(
         'Turn a local lecture/training video into an illustrated Markdown note. Run it in the folder that '
-        'holds the video. Other commands: video-notes setup, video-notes doctor.'))
+        'holds the video. Other commands: video-notes setup, video-notes doctor, and the agent mode '
+        '`video-notes prepare` / `video-notes assemble` (an assistant in a chat writes the chapters itself; '
+        'the tool runs no model).'))
     parser.add_argument('video', nargs='?', help='local video file (default: the only .mp4 in this folder)')
     parser.add_argument('--srt', help='existing subtitle file (default: same-name .srt beside the video, '
                                       'otherwise automatic transcription)')
     parser.add_argument('--output', default='output', help='output root (default: ./output)')
     parser.add_argument('--context', help='per-video context Markdown (default: <video>.context.md)')
     parser.add_argument('--backend', choices=['claude', 'codex'], help='override the configured model backend')
+    parser.add_argument('--fallback-backend', choices=['claude', 'codex'], help='automatically continue unfinished calls with this backend on a usage limit')
+    parser.add_argument('--resume-review', action='store_true', help='review persisted chapters only; keep verified PASS checkpoints, without extracting frames or rewriting initial drafts')
+    parser.add_argument('--codex-service-tier', choices=['fast', 'flex'], help='override the Codex service tier for this process only')
     parser.add_argument('--version', action='version', version=f'video-notes {__version__}')
     args = parser.parse_args(argv)
     cwd = Path.cwd()
@@ -153,6 +165,10 @@ def main(argv=None):
     config = load_config()
     if args.backend:
         config['backend'] = args.backend
+    if args.fallback_backend:
+        config['fallback_backend'] = args.fallback_backend
+    if args.codex_service_tier:
+        config['codex_service_tier'] = args.codex_service_tier
     from .llm import ModelError
     from .media import ToolError
     from .pipeline import InputError, Pipeline
@@ -160,7 +176,20 @@ def main(argv=None):
     try:
         pipeline = Pipeline(video, (cwd / args.output).resolve(), config, srt=args.srt, context=args.context,
                             cwd=cwd, log=log)
-        note, failed, report = pipeline.run()
+        if mode == 'prepare':
+            agent = pipeline.agent_prepare()
+            print(agent, flush=True)
+            log(f'agent briefs ready in {agent}; write each chapter there, then run video-notes assemble')
+            return 0
+        if mode == 'assemble':
+            note, problems = pipeline.agent_assemble()
+            if problems:
+                for chapter, items in problems.items():
+                    log(f'{chapter}: ' + '; '.join(items))
+                return _fail(1, f'{len(problems)} chapter(s) did not pass the checks; nothing was assembled')
+            print(note, flush=True)
+            return 0
+        note, failed, report = pipeline.resume_review() if args.resume_review else pipeline.run()
     except KeyboardInterrupt:
         log('interrupted; progress is kept, run the same command again to resume')
         return 130

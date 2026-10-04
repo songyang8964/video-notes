@@ -116,23 +116,23 @@ Note: the sign-in inside a desktop app is only valid inside that app. When the b
 "%LOCALAPPDATA%\OpenAI\Codex\bin\codex.exe" login
 ```
 
-#### Running it from a desktop-app conversation
+#### Using it from a desktop-app conversation (agent mode, recommended)
 
-You can also skip the terminal and let the AI in the desktop app run it for you:
+In a Claude desktop or Codex desktop conversation, let the AI in the conversation read the subtitles, look at the images and write **itself**; `video-notes` only does the steps that need no model (detection, chapters, screenshots, mechanical checks, assembly). No `claude` / `codex` CLI is started, no separate sign-in is needed, and the same subtitles and images are not sent to a model again and again.
 
 1. Open **Claude desktop → Code**, or the **Codex desktop app**, and choose the folder that holds the video as the working folder.
 2. Type in the conversation, for example:
 
    ```text
-   Run video-notes in this folder. When it finishes, tell me the note's path and summarise the chapters that did not pass and any degradations listed in report.md.
+   Use video-notes agent mode to turn the video in this folder into notes: run video-notes prepare, write topics.csv, knowledge.csv, chapter.md and review.md for each chapter following its brief.md, then run video-notes assemble until every check passes.
    ```
 
-3. The AI runs the same `video-notes` command and reads the result and the report back to you.
+3. The AI completes the chapters one by one and gives you the note's path.
 
 Notes:
 
-- The AI only runs the command for you; model calls are still made by the CLI found above, so the one-time sign-in above is still required.
-- Videos of two hours or more take hours; keep the conversation open. For long videos running it in your own terminal is more convenient. If it gets interrupted, run it again and it resumes where it stopped.
+- Do not ask the AI in the conversation to run `video-notes` (automatic mode) and watch its progress: the conversation and the CLI would both use your quota and the same content would be processed twice. For unattended runs, run `video-notes` in your own terminal.
+- Long videos can be done over several conversations: the briefs and the chapters already written stay in the work folder, and `assemble` names the chapters that are missing or fail the checks.
 
 Optional:
 
@@ -197,6 +197,7 @@ video-notes "course.mp4" --srt "subs.srt"
 video-notes "course.mp4" --backend codex          # use the other model this time
 video-notes "course.mp4" --output D:\notes        # output root (default ./output)
 video-notes "course.mp4" --context background.md  # video context file
+video-notes "course.mp4" --fallback-backend codex  # continue with Codex when Claude reaches its usage limit
 ```
 
 3. Progress is shown in the terminal (stderr); the last line (stdout) is the path of the note.
@@ -219,6 +220,17 @@ Rules:
 - Online links (http/https) are not supported yet; download the video first.
 - The original video and subtitles are read-only and never modified.
 - If you edited the previously generated `培训笔记.md` by hand, a new run **does not overwrite** it; the new result is saved as `培训笔记.<time>.md`.
+
+### Agent mode: prepare / assemble
+
+```bash
+video-notes prepare "course.mp4"    # checks, chapters, candidate screenshots; one brief.md per chapter (no model calls)
+video-notes assemble "course.mp4"   # the same mechanical checks as automatic mode; assembles only if all pass (no model calls)
+```
+
+- `prepare` writes each chapter's brief to `agent/Cnn/brief.md` in the work folder: the general writing rules, the chapter's subtitles, the candidate table (time, subtitles shown meanwhile, original image path) and contact sheets.
+- The writer (the AI in a conversation, or a person) writes `topics.csv`, `knowledge.csv` and `chapter.md` in the same folder (same format as automatic mode), plus a self-review record `review.md`: what was checked against the original for every inserted image, and where every important knowledge item is explained.
+- When `assemble` fails it writes each chapter's problems to `agent/check.md` and outputs nothing; fix them and run it again.
 
 ### Exit codes
 
@@ -441,11 +453,11 @@ The model writes the chapter in the original teaching order from the subtitles, 
 
 ### 8. Checks, review and revision
 
-See [Quality assurance](#quality-assurance). If the mechanical checks or the review fail, the model revises with the list of problems, at most 2 rounds.
+See [Quality assurance](#quality-assurance). The review sorts problems into "blocking" (wrong facts, numbers or commands, missing important knowledge, image/text mismatch, unsupported inference, narration) and "suggestions" (wording). Only blocking problems or failed mechanical checks trigger a revision; after a revision only the previous blocking problems and anything the revision introduced are re-checked, at most 2 rounds.
 
 ### 9. Whole-document review
 
-After all chapters are done the model reads the whole document and checks transitions between chapters, consistency of terms and numbers, coverage of the important knowledge, and **images repeated across chapters** (the program first finds pairs of images that look like the same slide). Problems are fixed per chapter; a revised chapter must still pass the mechanical checks, otherwise the previous version is kept and the event is recorded in the report.
+After all chapters are done the model reads the whole document and checks transitions between chapters, consistency of terms and coverage of the important knowledge. This pass sees no images, so it must not ask to "unify" numbers: different availability zones, devices or examples may legitimately use different values. Repeated images are handled while writing: every chapter's writing and review get the list of images already inserted in earlier chapters. Problems are fixed per chapter; a revised chapter must still pass the mechanical checks, otherwise the previous version is kept and the event is recorded in the report.
 
 ### 10. Output
 
@@ -465,6 +477,7 @@ Everything is assembled into one Markdown file, chosen original images are copie
 | Knowledge coverage | Every important knowledge item must map to an existing section in the "knowledge map", or carry an exclusion reason |
 | Level of detail | Text characters (excluding headings, code blocks and images) ≥ 100 per minute of teaching (configurable); sections covering at least 1 minute ≥ 50 per minute. Stops chapters written as summaries |
 | Writing style | No narration such as "the lecturer / speaker / the video mentions / according to the subtitles", nor any `forbid` word from the context |
+| Internal IDs | No internal IDs such as C01, Chapter 8 or frame IDs in the text; refer to earlier sections by their title |
 | Format | Every chapter has a title; no raw image paths, no unbalanced code blocks; no placeholders left after assembly |
 
 The per-chapter check-and-revise loop:
@@ -472,23 +485,25 @@ The per-chapter check-and-revise loop:
 ```mermaid
 flowchart TD
     W["Write"] --> C["Mechanical checks"]
-    C --> R["Independent review"]
-    R --> J{"All passed?"}
-    J -- yes --> OK["Chapter done"]
-    J -- no --> F["Revise"]
+    C --> R["Independent review<br/>blocking / suggestions"]
+    R --> J{"Blocking problems?"}
+    J -- no --> OK["Chapter done"]
+    J -- yes --> F["Revise, re-check blocking only"]
     F --> C
     F -. still failing after 2 rounds .-> REP["Output anyway<br/>problems in report"]
 ```
 
 ### Model review
 
-- **Independent per-chapter review**: the reviewer gets the subtitles, knowledge inventory, chosen original images and the draft, and checks whether important knowledge is fully explained (a keyword is not enough), whether facts and numbers match the subtitles and images, whether every image supports the neighbouring text, whether image rules are broken, and whether there is narration or off-topic material.
-- **Whole-document review**: chapter transitions, consistency of terms and numbers, coverage of important knowledge, images repeated across chapters.
+- **Independent per-chapter review**: the reviewer gets the subtitles, knowledge inventory, chosen original images, the list of images already inserted in earlier chapters and the draft, and sorts problems into blocking and suggestions: is important knowledge fully explained (a keyword is not enough), do facts and numbers match the subtitles and images, does every image support the neighbouring text, are image rules broken (including repeats across chapters), is there narration or off-topic material.
+- **Re-check**: after a revision only the previous blocking problems and errors the revision introduced are checked; there is no fresh full review, which used to keep producing new wording remarks forever.
+- **Whole-document review**: chapter transitions, consistency of terms, coverage of important knowledge.
 
 ### Limitations
 
 - Reviews are also done by a large language model. They catch obvious omissions, errors and formatting problems but are not a substitute for human checking.
 - "Is this image really essential" and "was this recognition error corrected properly" ultimately rely on the model; for important material, spot-check the chapters flagged in `report.md`.
+- Agent mode has no independent reviewer: `assemble` can only verify what a program can check and that `review.md` records a check for every image and every important knowledge item; whether those checks were really done depends on the writer.
 
 ---
 
@@ -497,22 +512,25 @@ flowchart TD
 ```
 <current folder>/
   output/<video name>/培训笔记.md  + assets/      ← for sharing
-  .work/video-notes/<video name>-<hash>/          ← internal records, can be deleted (loses the resume cache)
+  .work/video-notes/<hash>/                       ← internal records, can be deleted (loses the resume cache)
     source.json            input hashes, subtitle source and why it was chosen, model
     detect/                screen-detection signals and result cache
-    C01/ C02/ ...          per chapter: topics, knowledge inventory, candidates and reasons, image choice, draft, review
-    model-calls/           full prompt, response and log of every model call
+    C01/ C02/ ...          per chapter: topics, knowledge inventory, candidates and reasons, image choice, draft, review, checkpoint
+    agent/                 agent mode: brief.md per chapter, the files the agent wrote, check.md
+    model-calls/           full prompt, response, log and real token usage of every model call
     global-review.csv      problems found by the whole-document review
-    report.md              run report: per-chapter review results, unresolved problems, degradations, time
+    report.md              run report: per-chapter review results, unresolved problems, degradations, calls, tokens, time
 ```
 
-`report.md` lists degradations explicitly, e.g. OCR not installed, automatic transcription used, subtitle health problems, a whole-document revision rejected by the checks.
+On Windows, when the video's folder path is very deep (for example a meeting app's recording folder), internal records go to `%USERPROFILE%\.video-notes\work\<hash>` so that paths stay under the 260-character limit. Only one run at a time may use a work folder.
+
+`report.md` lists degradations explicitly, e.g. OCR not installed, automatic transcription used, subtitle health problems, the picture decodes only up to some point, a whole-document revision rejected by the checks.
 
 ---
 
 ## Configuration
 
-The config file is `%APPDATA%\video-notes\config.json` (Windows) or `~/.config/video-notes/config.json`. Common items can be changed with `video-notes setup`; edit the JSON for the rest.
+The config file is `~/.video-notes/config.json` (Windows: `%USERPROFILE%\.video-notes\config.json`; the old location `%APPDATA%\video-notes\config.json` is still read). It is not under AppData because desktop apps such as Claude and Codex desktop redirect AppData to a private folder each, so runs started from different apps would see different settings. Common items can be changed with `video-notes setup`; edit the JSON for the rest.
 
 | Key | Default | Description |
 | --- | --- | --- |
@@ -525,7 +543,9 @@ The config file is `%APPDATA%\video-notes\config.json` (Windows) or `~/.config/v
 | `shortlist` | 32 | Maximum distinct screens shown to the model per chapter (trimmed only above that) |
 | `chapter_minutes` | 10 | Target chapter length (minutes) |
 | `use_adaptive` | true | Use the PySceneDetect auxiliary detector (better recall, a bit slower) |
-| `review_cycles` | 2 | Maximum revision rounds per chapter |
+| `review_cycles` | 2 | Maximum "revise → re-check" rounds after the first review |
+| `parallel_chapters` | 3 | Chapters processed at the same time |
+| `fallback_backend` | empty | Backend that takes over on a usage limit (`claude` or `codex`); checked for usability when a run starts |
 | `min_chars_per_minute` | 100 | Level-of-detail floor |
 | `tesseract` / `ocr_langs` | empty / `eng` | OCR program path and languages |
 | `asr_backend` / `asr_model` / `whisperx` | auto / `large-v3` / empty | Local transcription settings |
@@ -545,7 +565,7 @@ Example: a roughly 2 h 40 min, 1080p screen recording with subtitles (ordinary l
 | Model calls (about 5–8 per chapter plus one whole-document review) | several hours, depending on model speed and usage limits |
 
 - Screen detection runs only on the first run; afterwards the cache is reused completely.
-- Model calls run chapter by chapter; after an interruption completed calls are not repeated.
+- 3 chapters run in parallel by default; every model call loads only the image-reading tool and a short system prompt, and `report.md` records the real token usage. After an interruption completed calls are not repeated (results of both backends are reused).
 - Memory: detection streams frame by frame, so memory use does not grow with video length. Close other memory-hungry programs to avoid decode failures from low memory (the tool retries and records them in the report).
 
 ---
@@ -555,6 +575,7 @@ Example: a roughly 2 h 40 min, 1080p screen recording with subtitles (ordinary l
 ```bash
 python -m unittest tests.test_video_notes -v      # unit tests: subtitle parsing and choice, chapters, check rules, algorithms, output protection
 python tests/integration_scripted.py <folder>      # run the full pipeline on a real clip with a scripted model (no real model calls)
+python tests/integration_agent_mode.py <folder>    # agent mode: prepare → scripted chapters → assemble (no model calls)
 ```
 
 Source layout:
@@ -571,7 +592,8 @@ src/video_notes/
   llm.py          model backends (Claude Code CLI / Codex CLI), desktop-app discovery, cache, retries, sign-in check
   render.py       mechanical checks and assembly
   config.py       configuration and video context
-  prompts/        prompts for each stage (general rules, topics, image choice, writing, review, revision, whole-document review)
+  checkpoint.py   per-chapter checkpoints (content hashes) for safe resumed review and handoffs
+  prompts/        prompts for each stage (general rules, topics, image choice, writing, review, re-check, revision, whole-document review, agent brief)
 colab/transcribe.ipynb   Colab T4 GPU subtitle notebook
 ```
 

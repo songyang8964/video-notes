@@ -9,12 +9,23 @@ import numpy as np
 DECODE_THREADS = 2
 
 
+def _decoded(container, stream):
+    """Frames up to the first undecodable packet. A damaged recording (e.g. a meeting recorder
+    that crashed) often has a corrupt tail; the picture before it is still valid."""
+    frames = container.decode(stream)
+    while True:
+        try:
+            yield next(frames)
+        except (StopIteration, av.FFmpegError):
+            return
+
+
 def decode_gray_frames(path: Path, w: int = 64, h: int = 36):
     """Stream (pts_seconds, float32 gray w×h) for every frame; memory independent of length."""
     with av.open(str(path)) as container:
         stream = container.streams.video[0]
         stream.thread_type = 'AUTO'
-        for frame in container.decode(stream):
+        for frame in _decoded(container, stream):
             gray = frame.reformat(width=w, height=h, format='gray', interpolation='BICUBIC')
             yield frame.time, gray.to_ndarray().astype(np.float32)
 
@@ -28,7 +39,7 @@ def _frame_at(container, time_s: float):
     except av.FFmpegError:
         pass  # unseekable container: decode sequentially from the start
     last = None
-    for frame in container.decode(stream):
+    for frame in _decoded(container, stream):
         if frame.time is None:
             continue
         if frame.time >= time_s - 1e-3:
@@ -50,7 +61,7 @@ def gray_many(path: Path, times, w: int = 400, h: int = 225):
         stream = container.streams.video[0]
         stream.thread_type = 'AUTO'
         last = None
-        for frame in container.decode(stream):
+        for frame in _decoded(container, stream):
             if frame.time is None:
                 continue
             while k < len(wanted) and frame.time >= wanted[k] - 1e-3:

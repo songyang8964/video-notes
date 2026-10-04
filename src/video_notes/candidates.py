@@ -53,6 +53,10 @@ def reading_copy(path: Path, long_edge=READ_LONG_EDGE):
 
 
 def contact_sheets(rows, directory: Path, per_sheet=12, columns=4, tile=(480, 270)):
+    """Labelled thumbnail sheets (frame ID + time on each tile) in row order, for people inspecting a run.
+    Not used for model selection: table and CLI text is unreadable on thumbnails. Old sheets are replaced."""
+    for old in directory.glob('sheet-*.jpg'):
+        old.unlink()
     font, sheets = _font(22), []
     for number, offset in enumerate(range(0, len(rows), per_sheet), 1):
         batch = rows[offset:offset + per_sheet]
@@ -191,7 +195,7 @@ def build(chapter, start_ms, end_ms, screens, video, duration_ms, directory: Pat
         writer = csv.DictWriter(handle, fieldnames=FIELDS, extrasaction='ignore')
         writer.writeheader()
         writer.writerows(rows)
-    contact_sheets(chosen, directory)
+    contact_sheets(chosen, directory)  # for people inspecting a run; the model judges per-candidate copies
     log(f'{chapter}: {len(rows)} candidates ({failures} unreadable), {len(live)} passed quality, '
         f'{len(distinct)} distinct screens, {len(chosen)} shortlisted')
     return chosen, rows
