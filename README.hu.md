@@ -4,8 +4,8 @@
 
 Helyi előadás-, kurzus- vagy képzésvideóból **megosztható tanulási jegyzetet készít az eredeti videó képkockáival** (Markdown és Word változatban).
 
-- A jegyzetet a Claude vagy Codex alkalmazásban veled beszélgető MI **maga** írja: a feliratokat egyszer olvassa el, minden képet egyszer néz meg, és az eredeti magyarázat sorrendjében fejti ki az okokat, működést, feltételeket, lépéseket és példákat. Nem összefoglaló és nem leirat.
-- Az eszköz végzi az összes munkát, amelyhez nem kell nagy nyelvi modell: feliratellenőrzés, képernyőváltások felismerése, fejezetek, jelölt képkockák és minőségszűrés, gépi ellenőrzés, Markdown és Word kimenet. **Az eszköz maga nem hív modellt**, így a háttérben nem fogyaszt plusz keretet.
+- A jegyzetet a Claude vagy Codex alkalmazásban veled beszélgető MI írja: a feliratokat egyszer olvassa el, minden képet egyszer néz meg, és az eredeti magyarázat sorrendjében fejti ki az okokat, működést, feltételeket, lépéseket és példákat. Nem összefoglaló és nem leirat.
+- Az eszköz végzi az összes munkát, amelyhez nem kell nagy nyelvi modell: feliratellenőrzés, képernyőváltások felismerése, fejezetek, jelölt képkockák és minőségszűrés, gépi ellenőrzés, Markdown és Word kimenet.
 - Fejezetenként legfeljebb 8 kulcskép, minden dia csak egyszer, a képaláírás leírja a kép tartalmát és az eredeti videóbeli időt.
 - A jegyzet a videóval azonos nevű, és a videó mellé kerül: `<videó neve>.md`, `<videó neve>.docx`, `<videó neve>_assets/`.
 
@@ -63,7 +63,7 @@ flowchart LR
 
 - Python 3.10 vagy újabb
 - FFmpeg: az `ffmpeg` és az `ffprobe` legyen a PATH-ban
-- Egy író MI: Claude asztali (Code), Claude Code, vagy a Codex asztali alkalmazás / Codex CLI. Az eszköz nem hívja őket, ezért nem kell hozzá külön bejelentkezés.
+- Egy író MI: Claude asztali (Code), Claude Code, vagy a Codex asztali alkalmazás / Codex CLI
 - Opcionális: Tesseract OCR (jobb jelöltrangsor, terminálok és táblázatok esetén a leghasznosabb); helyi beszédfelismerés (csak felirat nélkül kell): `pip install faster-whisper` vagy WhisperX
 
 ### Telepítési lépések
@@ -94,7 +94,7 @@ video-notes doctor                         # ellenőrzi az FFmpeg-et, a Python-f
 
 ## Használat
 
-### A Claude / Codex alkalmazásban (ajánlott)
+### A Claude / Codex alkalmazásban
 
 1. Nyisd meg a **Claude asztali → Code** lapot vagy a **Codex asztali alkalmazást**, és válaszd munkamappának a videót tartalmazó mappát.
 2. Küldd el a gyors kezdés 4. lépésében szereplő szöveget.
@@ -109,7 +109,7 @@ video-notes assemble "kurzus.mp4"    # miután minden fejezet elkészült
 video-notes assemble "kurzus.mp4" --output D:\jegyzetek   # kimenet másik mappába
 ```
 
-A `prepare` a végén kiírja a csomagok mappáját (a belső naplók `agent/` mappáját): az ottani `README.md` felsorolja a fejezeteket, és minden fejezetnek van egy `Cnn/` almappája, amelynek `brief.md` fájlja tartalmazza az általános írási szabályokat, a videókontextust, a fejezet feliratait, a jelöltek táblázatát (idő, közben látható feliratok, eredeti kép útvonala) és az áttekintő lapokat. Az író ugyanabba az almappába négy fájlt ír:
+A `prepare` a végén kiírja a csomagok mappáját (a belső naplók `briefs/` mappáját): az ottani `README.md` felsorolja a fejezeteket, és minden fejezetnek van egy `Cnn/` almappája, amelynek `brief.md` fájlja tartalmazza az általános írási szabályokat, a videókontextust, a fejezet feliratait, a jelöltek táblázatát (idő, közben látható feliratok, eredeti kép útvonala) és az áttekintő lapokat. Az író ugyanabba az almappába négy fájlt ír:
 
 | Fájl | Tartalom |
 | --- | --- |
@@ -137,7 +137,7 @@ A `prepare` a végén kiírja a csomagok mappáját (a belső naplók `agent/` m
 | Kilépési kód | Jelentés |
 | --- | --- |
 | 0 | Sikeres: a csomagok elkészültek, vagy minden fejezet átment az ellenőrzésen és a jegyzet elkészült |
-| 1 | Függőségi vagy feldolgozási hiba; vagy fejezetek nem mentek át az ellenőrzésen (okok az `agent/check.md` fájlban, jegyzet nem készült) |
+| 1 | Függőségi vagy feldolgozási hiba; vagy fejezetek nem mentek át az ellenőrzésen (okok az `briefs/check.md` fájlban, jegyzet nem készült) |
 | 2 | Kétértelmű vagy érvénytelen bemenet: nincs videó, több videó, nem létező fájl, online hivatkozás, használhatatlan felirat |
 | 130 | Felhasználói megszakítás (a haladás megmarad) |
 
@@ -201,7 +201,7 @@ A feliratban szereplő "rafting" a Raft felismerési hibája. Az előadás előt
 
 ### Korlátok
 
-- Nincs független áttekintő: a program ellenőrzi a formátumot, a lefedettséget és az önellenőrzési napló teljességét, de azt nem tudja megítélni, hogy a szakmai tartalom helyes-e; ez azon múlik, hogy az író MI gondosan összevetette-e a feliratokkal és az eredeti képekkel.
+- A program ellenőrzi a formátumot, a lefedettséget és az önellenőrzési napló teljességét, de azt nem tudja megítélni, hogy a szakmai tartalom helyes-e; ez azon múlik, hogy az író MI gondosan összevetette-e a feliratokkal és az eredeti képekkel.
 - Fontos anyagoknál nézd át magad a kulcsfejezeteket, különösen a parancsokat, címeket és számokat.
 
 ---
@@ -240,7 +240,7 @@ A belső naplók a videó mappájának `.work/video-notes/<hash>/` könyvtáráb
 
 ```bash
 python -m unittest discover -s tests -v            # egységtesztek
-python tests/integration_agent_mode.py <mappa>     # prepare → megírt fejezetek → assemble valódi videórészleten (modellhívás nélkül)
+python tests/integration_prepare_assemble.py <mappa>     # prepare → megírt fejezetek → assemble valódi videórészleten (modellhívás nélkül)
 ```
 
 ```
@@ -253,7 +253,7 @@ src/video_notes/
   vision/         minőségszűrés, OCR és szövegújdonság, változatos kiválasztás
   candidates.py   fejezetenkénti jelölt képkockák, olvasási másolatok, áttekintő lapok
   render.py       gépi ellenőrzés, összeállítás, Word kimenet
-  prompts/        írási szabályok (rules.md) és a fejezetcsomag sablonja (agent.md)
+  prompts/        írási szabályok (rules.md) és a fejezetcsomag sablonja (brief.md)
 colab/transcribe.ipynb   Colab T4 GPU feliratkészítő jegyzetfüzet
 ```
 

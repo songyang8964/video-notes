@@ -334,7 +334,7 @@ class DuplicateScreenTests(unittest.TestCase):
         self.assertEqual(live[0]['status'], 'duplicate')
 
 
-class AgentModeSafetyTests(unittest.TestCase):
+class SafetyTests(unittest.TestCase):
     def test_run_lock_refuses_second_run_and_clears_stale(self):
         import os
         from video_notes.pipeline import InputError, RunLock

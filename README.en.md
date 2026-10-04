@@ -4,8 +4,8 @@
 
 Turn a local lecture, course or training video into a **shareable study note with screenshots from the original video** (Markdown and Word).
 
-- The AI you talk to in the Claude or Codex app writes the note **itself**: it reads the subtitles once, looks at each image once, and explains reasons, mechanisms, conditions, steps and examples in the original teaching order. It is not a summary or a transcript.
-- The tool does all the work that needs no large language model: subtitle checks, screen-change detection, chapters, candidate screenshots and quality filtering, mechanical checks, Markdown and Word output. **The tool itself calls no model** and uses no extra quota in the background.
+- The AI you talk to in the Claude or Codex app writes the note: it reads the subtitles once, looks at each image once, and explains reasons, mechanisms, conditions, steps and examples in the original teaching order. It is not a summary or a transcript.
+- The tool does all the work that needs no large language model: subtitle checks, screen-change detection, chapters, candidate screenshots and quality filtering, mechanical checks, Markdown and Word output.
 - At most 8 key screenshots per chapter, each slide once, captioned with what the image shows and the original video time.
 - The note is named after the video and saved next to it: `<video name>.md`, `<video name>.docx`, `<video name>_assets/`.
 
@@ -63,7 +63,7 @@ flowchart LR
 
 - Python 3.10 or newer
 - FFmpeg: `ffmpeg` and `ffprobe` on the PATH
-- An AI to write with: Claude desktop (Code), Claude Code, or the Codex desktop app / Codex CLI. The tool does not call them, so it needs no sign-in of its own.
+- An AI to write with: Claude desktop (Code), Claude Code, or the Codex desktop app / Codex CLI
 - Optional: Tesseract OCR (better ranking of candidate screenshots, most useful for terminals and tables); local speech recognition (only needed without subtitles): `pip install faster-whisper` or WhisperX
 
 ### Installation steps
@@ -94,7 +94,7 @@ video-notes doctor                         # checks FFmpeg, Python dependencies,
 
 ## Usage
 
-### In the Claude / Codex app (recommended)
+### In the Claude / Codex app
 
 1. Open **Claude desktop → Code**, or the **Codex desktop app**, and choose the folder that holds the video as the working folder.
 2. Send the text from step 4 of the quick start.
@@ -109,7 +109,7 @@ video-notes assemble "course.mp4"    # after all chapters are written
 video-notes assemble "course.mp4" --output D:\notes   # write to another folder
 ```
 
-When `prepare` finishes it shows the folder with the briefs (`agent/` in the internal records): its `README.md` lists all chapters, and each chapter has a subfolder `Cnn/` whose `brief.md` contains the general writing rules, the video context, the chapter's subtitles, the candidate table (time, subtitles shown meanwhile, original image path) and contact sheets. The writer puts four files in the same subfolder:
+When `prepare` finishes it shows the folder with the briefs (`briefs/` in the internal records): its `README.md` lists all chapters, and each chapter has a subfolder `Cnn/` whose `brief.md` contains the general writing rules, the video context, the chapter's subtitles, the candidate table (time, subtitles shown meanwhile, original image path) and contact sheets. The writer puts four files in the same subfolder:
 
 | File | Content |
 | --- | --- |
@@ -137,7 +137,7 @@ When `prepare` finishes it shows the folder with the briefs (`agent/` in the int
 | Exit code | Meaning |
 | --- | --- |
 | 0 | Success: briefs written, or every chapter passed the checks and the note was written |
-| 1 | Dependency or processing failure; or chapters failed the checks (reasons in `agent/check.md`, no note written) |
+| 1 | Dependency or processing failure; or chapters failed the checks (reasons in `briefs/check.md`, no note written) |
 | 2 | Ambiguous or invalid input: no video, several videos, file not found, online link, unusable subtitles |
 | 130 | Interrupted by the user (progress is kept) |
 
@@ -201,7 +201,7 @@ This lecture is about consensus algorithms. Write the terms as Raft, Paxos, Lead
 
 ### Limitations
 
-- There is no independent reviewer: the program checks format, coverage and that the self-review record is complete, but it cannot tell whether the technical content is right; that depends on the writing AI comparing carefully with the subtitles and the original images.
+- The program checks format, coverage and that the self-review record is complete, but it cannot tell whether the technical content is right; that depends on the writing AI comparing carefully with the subtitles and the original images.
 - For important material, spot-check the key chapters yourself, especially commands, addresses and numbers.
 
 ---
@@ -240,7 +240,7 @@ Internal records are in `.work/video-notes/<hash>/` in the video's folder, or in
 
 ```bash
 python -m unittest discover -s tests -v            # unit tests
-python tests/integration_agent_mode.py <folder>    # prepare → written chapters → assemble on a real clip (no model calls)
+python tests/integration_prepare_assemble.py <folder>    # prepare → written chapters → assemble on a real clip (no model calls)
 ```
 
 ```
@@ -253,7 +253,7 @@ src/video_notes/
   vision/         quality filter, OCR and text novelty, diversity selection
   candidates.py   per-chapter candidate screenshots, reading copies, contact sheets
   render.py       mechanical checks, assembly, Word output
-  prompts/        writing rules (rules.md) and the chapter brief template (agent.md)
+  prompts/        writing rules (rules.md) and the chapter brief template (brief.md)
 colab/transcribe.ipynb   Colab T4 GPU subtitle notebook
 ```
 

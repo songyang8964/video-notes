@@ -1,4 +1,4 @@
-"""Regression tests for output naming, image cleanup and the agent self-review record."""
+"""Regression tests for output naming, image cleanup and the self-review record."""
 import tempfile
 import unittest
 from pathlib import Path
@@ -23,7 +23,7 @@ class PreservedNoteImageTests(unittest.TestCase):
             self.assertTrue((out / 'assets' / 'C01F00000002.jpg').is_file())
 
 
-class AgentReviewRecordTests(unittest.TestCase):
+class ReviewRecordTests(unittest.TestCase):
     frames = [dict(frame_id='C01F00012000')]
     knowledge = [dict(knowledge_id='C01K001', importance='important'), dict(knowledge_id='C01K002', importance='supporting')]
 

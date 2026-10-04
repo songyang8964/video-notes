@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "video-notes"
 version = "0.2.0"
-description = "Turn a local lecture or training video into an illustrated, shareable note (Markdown and Word) written by an assistant in a chat; the tool itself calls no model."
+description = "Turn a local lecture or training video into an illustrated, shareable note (Markdown and Word), written with an assistant in a chat."
 readme = "README.md"
 requires-python = ">=3.10"
 license-files = ["NOTICE"]

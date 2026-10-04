@@ -4,8 +4,8 @@
 
 把本地的讲座、课程或培训视频，整理成**带原视频截图、可以直接分享的学习笔记**（Markdown 和 Word 两个版本）。
 
-- 由你在 Claude 或 Codex 应用里对话的 AI **亲自**写笔记：字幕读一次、每张图看一次，按原讲解顺序和思路完整解释原因、机制、条件、步骤和例子，不是摘要或逐字稿。
-- 工具负责所有不需要大模型的工作：字幕检查、画面变化检测、分章、候选截图与质量过滤、程序检查、生成 Markdown 和 Word。**工具本身不调用任何模型**，不会在后台另外消耗额度。
+- 由你在 Claude 或 Codex 应用里对话的 AI 写笔记：字幕读一次、每张图看一次，按原讲解顺序和思路完整解释原因、机制、条件、步骤和例子，不是摘要或逐字稿。
+- 工具负责所有不需要大模型的工作：字幕检查、画面变化检测、分章、候选截图与质量过滤、程序检查、生成 Markdown 和 Word。
 - 每章最多 8 张重点截图，同一页只用一次，图注写明图中内容和原视频时间。
 - 笔记与视频同名，放在视频旁边：`<视频名>.md`、`<视频名>.docx`、`<视频名>_assets/`。
 
@@ -63,7 +63,7 @@ flowchart LR
 
 - Python 3.10 或更高版本
 - FFmpeg：`ffmpeg` 和 `ffprobe` 在 PATH 中
-- 用来写作的 AI：Claude 桌面版（Code）、Claude Code，或 Codex 桌面版 / Codex CLI。工具自己不调用它们，所以不需要为工具单独登录。
+- 用来写作的 AI：Claude 桌面版（Code）、Claude Code，或 Codex 桌面版 / Codex CLI
 - 可选：Tesseract OCR（改善候选截图排序，命令行和表格类内容收益最大）；本地语音识别（仅在没有字幕时需要）：`pip install faster-whisper` 或安装 WhisperX
 
 ### 安装步骤
@@ -94,7 +94,7 @@ video-notes doctor                         # 检查 FFmpeg、Python 依赖、pan
 
 ## 使用
 
-### 在 Claude / Codex 应用里使用（推荐）
+### 在 Claude / Codex 应用里使用
 
 1. 打开 **Claude 桌面版 → Code**，或 **Codex 桌面版**，选择视频所在的文件夹作为工作目录。
 2. 发送“快速开始”第 4 步中的那段话。
@@ -109,7 +109,7 @@ video-notes assemble "课程.mp4"      # 写完所有章节后运行
 video-notes assemble "课程.mp4" --output D:\notes   # 输出到其他文件夹
 ```
 
-`prepare` 结束时会显示资料包所在的文件夹（内部记录中的 `agent/`）：那里的 `README.md` 列出所有章节，每章一个子文件夹 `Cnn/`，其中的 `brief.md` 包括通用写作规则、视频上下文、本章字幕、候选截图表（时间、显示期间的字幕、原图路径）和联系表。写作者在同一子文件夹写下面四个文件：
+`prepare` 结束时会显示资料包所在的文件夹（内部记录中的 `briefs/`）：那里的 `README.md` 列出所有章节，每章一个子文件夹 `Cnn/`，其中的 `brief.md` 包括通用写作规则、视频上下文、本章字幕、候选截图表（时间、显示期间的字幕、原图路径）和联系表。写作者在同一子文件夹写下面四个文件：
 
 | 文件 | 内容 |
 | --- | --- |
@@ -137,7 +137,7 @@ video-notes assemble "课程.mp4" --output D:\notes   # 输出到其他文件夹
 | 退出码 | 含义 |
 | --- | --- |
 | 0 | 成功：资料包已生成，或所有章节通过检查并已输出笔记 |
-| 1 | 依赖或处理失败；或有章节未通过检查（原因写在 `agent/check.md`，没有输出笔记） |
+| 1 | 依赖或处理失败；或有章节未通过检查（原因写在 `briefs/check.md`，没有输出笔记） |
 | 2 | 输入不明确或无效：没有视频、多个视频、文件不存在、在线链接、字幕不合格 |
 | 130 | 用户中断（进度已保存） |
 
@@ -201,7 +201,7 @@ forbid: 讲者, 本视频
 
 ### 局限
 
-- 没有独立审查者：程序能核对格式、覆盖和自查记录是否完整，但无法判断技术内容是否写对，这取决于写作的 AI 是否认真对照了字幕和原图。
+- 程序能核对格式、覆盖和自查记录是否完整，但无法判断技术内容是否写对；这取决于写作的 AI 是否认真对照了字幕和原图。
 - 重要场合请人工抽查关键章节，特别是命令、地址和数值。
 
 ---
@@ -240,7 +240,7 @@ forbid: 讲者, 本视频
 
 ```bash
 python -m unittest discover -s tests -v            # 单元测试
-python tests/integration_agent_mode.py <文件夹>     # 在真实视频片段上跑通 prepare → 写章节 → assemble（不调用模型）
+python tests/integration_prepare_assemble.py <文件夹>     # 在真实视频片段上跑通 prepare → 写章节 → assemble（不调用模型）
 ```
 
 ```
@@ -253,7 +253,7 @@ src/video_notes/
   vision/         质量过滤、OCR 与文字新颖度、多样性挑选
   candidates.py   每章候选截图、阅读副本、联系表
   render.py       程序检查、组装、Word 输出
-  prompts/        写作规则（rules.md）与每章资料包模板（agent.md）
+  prompts/        写作规则（rules.md）与每章资料包模板（brief.md）
 colab/transcribe.ipynb   Colab T4 GPU 字幕生成笔记本
 ```
 

@@ -1,4 +1,4 @@
-"""`video-notes` command line (agent mode: an assistant in a chat writes, the tool runs no model).
+"""`video-notes` command line: the tool prepares and checks, an assistant in a chat writes the chapters.
 
     video-notes [prepare] [video] [--srt subs.srt] [--context ctx.md]   # checks, chapters, frames, briefs
     video-notes assemble [video] [--output DIR]                          # checks the chapters, writes the note
@@ -116,7 +116,7 @@ def main(argv=None):
         'assistant in a chat. `video-notes prepare` (the default) checks the video and subtitles, splits '
         'chapters, captures candidate frames and writes one brief per chapter; the assistant writes each '
         'chapter from its brief; `video-notes assemble` checks the chapters and writes <video>.md, '
-        '<video>.docx and <video>_assets beside the video. The tool calls no model. Other commands: '
+        '<video>.docx and <video>_assets beside the video. Other commands: '
         'video-notes setup, video-notes doctor.'))
     parser.add_argument('video', nargs='?', help='local video file (default: the only .mp4 in this folder)')
     parser.add_argument('--srt', help='existing subtitle file (default: same-name .srt beside the video, '
@@ -137,13 +137,13 @@ def main(argv=None):
         root = (cwd / args.output).resolve() if args.output else video.parent
         pipeline = Pipeline(video, root, load_config(), srt=args.srt, context=args.context, cwd=cwd, log=log)
         if mode == 'prepare':
-            agent = pipeline.agent_prepare()
-            print(agent, flush=True)
-            log(f'briefs ready: read {agent / "README.md"}; for each chapter write topics.csv, knowledge.csv, '
+            briefs = pipeline.prepare()
+            print(briefs, flush=True)
+            log(f'briefs ready: read {briefs / "README.md"}; for each chapter write topics.csv, knowledge.csv, '
                 f'chapter.md and review.md next to its brief.md, then run: video-notes assemble'
                 + (f' "{video.name}"' if args.video else ''))
             return 0
-        note, problems = pipeline.agent_assemble()
+        note, problems = pipeline.assemble()
     except KeyboardInterrupt:
         log('interrupted; progress is kept, run the same command again to resume')
         return 130

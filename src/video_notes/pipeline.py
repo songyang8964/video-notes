@@ -1,8 +1,8 @@
-"""Agent mode: the tool does every step that needs no model, an assistant in a chat writes.
+"""The tool does every step that needs no model; an assistant in a chat writes the chapters.
 
     prepare:  ingest → subtitle choice/transcription → picture end → screen detection → chapters →
-              per chapter candidate frames → agent/Cnn/brief.md (rules, transcript, candidate table)
-    (agent):  per chapter topics.csv, knowledge.csv, chapter.md, review.md — written in the conversation,
+              per chapter candidate frames → briefs/Cnn/brief.md (rules, transcript, candidate table)
+    (writer): per chapter topics.csv, knowledge.csv, chapter.md, review.md — written in the conversation,
               transcript read once and each image looked at once
     assemble: the same mechanical checks for every chapter (+ the self-review record) → <video>.md,
               <video>.docx and <video>_assets/ beside the video
@@ -117,7 +117,7 @@ def _long_paths_enabled():
 
 
 def review_record_problems(record, frames, knowledge):
-    """Agent mode has no independent reviewer, so the writer's self-review must be auditable: review.md
+    """Nobody else reviews the chapters, so the writer's self-review must be auditable: review.md
     names every inserted image with what was checked against the original, and every important item."""
     problems = []
     lines = {line.split('：')[0].split(':')[0].strip(' -*`'): line for line in record.splitlines() if line.strip()}
@@ -224,7 +224,7 @@ class Pipeline:
         for problem in problems:
             self.warn(f'subtitle: {problem}')
         self.srt_hash = sha256(self.srt)
-        writer = 'agent (in-conversation)'
+        writer = 'assistant in a conversation'
         self.tesseract = tesseract_path(self.config.get('tesseract'))
         if not self.tesseract:
             self.warn('Tesseract not found: OCR text novelty is off (candidate ranking uses visuals only)')
@@ -299,16 +299,16 @@ class Pipeline:
             self.warn(f'Word version not written: {error}')
         return note, inserted
 
-    def agent_prepare(self):
+    def prepare(self):
         """Media/subtitle checks, detection, chapters and candidate frames; one brief per chapter in
-        <work>/agent/. No model calls. → agent folder"""
+        <work>/briefs/. No model calls. → briefs folder"""
         self.prepare_work()
         with RunLock(self.work):
             self.ingest()
             screens, chapters = self.scan()
             requested = parse_times(self.settings.get('include_times', ''))
-            agent = self.work / 'agent'
-            agent.mkdir(exist_ok=True)
+            briefs = self.work / 'briefs'
+            briefs.mkdir(exist_ok=True)
 
             def pack(item):
                 n, owned = item
@@ -320,7 +320,7 @@ class Pipeline:
                     chapter, start, end, screens, self.video, self.picture_ms, directory / 'candidates', cues=owned,
                     shortlist=self.config['shortlist'], tesseract=self.tesseract,
                     ocr_langs=self.config['ocr_langs'], requested_ms=requested, log=self.log)[0]
-                folder = agent / chapter
+                folder = briefs / chapter
                 folder.mkdir(exist_ok=True)
                 first = owned[0]['id'] - 1
                 frames = '\n'.join(
@@ -328,7 +328,7 @@ class Pipeline:
                     f"OCR: {f.get('ocr', '')[:160]} | 原图 {f['path']} | 阅读副本 {f.get('read_path', '')}"
                     for f in shortlist) or '（本章没有可解码的画面：只写文字，不插图）'
                 sheets = '\n'.join(str(p) for p in sorted((directory / 'candidates').glob('sheet-*.jpg'))) or '（无）'
-                brief = fill(prompt_text('agent'), **self.values(
+                brief = fill(prompt_text('brief'), **self.values(
                     chapter, owned, folder=str(folder), frames=frames, sheets=sheets,
                     surrounding=cue_text(self.cues[max(0, first - 6):first] + self.cues[owned[-1]['id']:owned[-1]['id'] + 5])))
                 (folder / 'brief.md').write_text(brief, encoding='utf-8')
@@ -337,8 +337,8 @@ class Pipeline:
                             start=stamp(owned[0]['start']), end=stamp(owned[-1]['end']), candidates=len(shortlist))
             with ThreadPoolExecutor(max(1, int(self.config.get('parallel_chapters') or 1))) as pool:
                 index = list(pool.map(pack, enumerate(chapters, 1)))
-            (agent / 'chapters.json').write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding='utf-8')
-            lines = ['# Agent briefs', '', f'video: {self.video}', f'work: {self.work}',
+            (briefs / 'chapters.json').write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding='utf-8')
+            lines = ['# Chapter briefs', '', f'video: {self.video}', f'work: {self.work}',
                      f'note language: {self.language}', '',
                      'For each chapter folder below: read brief.md, then write topics.csv, knowledge.csv, chapter.md '
                      'and review.md into the same folder. When every chapter is written, run `video-notes assemble` '
@@ -348,24 +348,24 @@ class Pipeline:
                                                                       '|---|---|---|---|']
             lines += [f"| {c['chapter']} | {c['start']}–{c['end']} | C{c['first_cue']}–C{c['last_cue']} | "
                       f"{c['candidates']} |" for c in index]
-            (agent / 'README.md').write_text('\n'.join(lines) + '\n', encoding='utf-8')
-            return agent
+            (briefs / 'README.md').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+            return briefs
 
-    def agent_assemble(self):
-        """Check the agent-written chapters with the automatic run's checks and assemble the note.
+    def assemble(self):
+        """Check the written chapters and assemble the note.
         No model calls. → (note path or None, {chapter: problems})"""
         self.prepare_work()
         with RunLock(self.work):
             self.ingest()
-            agent = self.work / 'agent'
-            index_path = agent / 'chapters.json'
+            briefs = self.work / 'briefs'
+            index_path = briefs / 'chapters.json'
             if not index_path.is_file():
-                raise InputError('no agent briefs here; run `video-notes prepare` first')
+                raise InputError('no chapter briefs here; run `video-notes prepare` first')
             index = json.loads(index_path.read_text(encoding='utf-8'))
             cues = {c['id']: c for c in self.cues}
             results, problems = {}, {}
             for item in index:
-                chapter, folder = item['chapter'], agent / item['chapter']
+                chapter, folder = item['chapter'], briefs / item['chapter']
                 missing = [n for n in ('topics.csv', 'knowledge.csv', 'chapter.md', 'review.md')
                            if not (folder / n).is_file()]
                 if missing:
@@ -375,7 +375,7 @@ class Pipeline:
                 topics, knowledge = read('topics.csv'), read('knowledge.csv')
                 text = (folder / 'chapter.md').read_text(encoding='utf-8')
                 owned = [cues[i] for i in range(item['first_cue'], item['last_cue'] + 1)]
-                frames = self.agent_frames(chapter, text, topics)
+                frames = self.chapter_frames(chapter, text, topics)
                 found = self.check(text, owned, topics, knowledge, frames)
                 covered = [i for t in topics for i in range(int(t['first_cue']), int(t['last_cue']) + 1)]
                 if covered != [c['id'] for c in owned]:
@@ -384,8 +384,8 @@ class Pipeline:
                 if found:
                     problems[chapter] = found
                 results[chapter] = dict(text=text, frames=frames)
-            report = agent / 'check.md'
-            report.write_text('# Agent chapter checks\n\n' + ('\n'.join(
+            report = briefs / 'check.md'
+            report.write_text('# Chapter checks\n\n' + ('\n'.join(
                 f'- {c}: ' + '; '.join(p) for c, p in problems.items()) or 'all chapters pass') + '\n', encoding='utf-8')
             if problems:
                 return None, problems
@@ -395,8 +395,8 @@ class Pipeline:
             self.log(f'assembled {len(results)} chapters, {len(inserted)} images; checks {report}')
             return note, {}
 
-    def agent_frames(self, chapter, text, topics):
-        """Frames the agent inserted, with the topic of the section that holds each placeholder."""
+    def chapter_frames(self, chapter, text, topics):
+        """Frames the writer inserted, with the topic of the section that holds each placeholder."""
         table = self.work / chapter / 'candidates' / 'candidates.csv'
         known = {r['frame_id']: r for r in csv.DictReader(table.open(encoding='utf-8'))} if table.is_file() else {}
         frames = []
