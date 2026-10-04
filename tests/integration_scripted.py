@@ -49,14 +49,14 @@ class ScriptedModel:
             topics = re.findall(r'^(C\d\dT\d\d),(\d+),(\d+),', prompt, re.M)
             frames = re.findall(r'^(C\d\dF\d+) \| topic=(C\d\dT\d\d)', prompt, re.M)
             knowledge = re.findall(r'^(C\d\dK\d+),\d+,\d+,[^\n]*,important', prompt, re.M)
-            parts = [f'# Chapter {chapter}']
+            parts = ['# Chapter title']
             for tid, a, b in topics:
-                parts.append(f'## {tid}\n<!-- cues:{a}-{b} -->\n' + ('短。' if thin else '完整解释原因、机制和步骤。' * 40))
+                parts.append(f'## Topic {a}\n<!-- cues:{a}-{b} -->\n' + ('短。' if thin else '完整解释原因、机制和步骤。' * 40))
                 parts += [f'[[frame:{f}|caption]]' for f, t in frames if t == tid]
             if not thin:
-                parts.append('<!-- knowledge-map: ' + '; '.join(f'{k}={topics[0][0]}' for k in knowledge) + ' -->')
+                parts.append('<!-- knowledge-map: ' + '; '.join(f'{k}=Topic {topics[0][1]}' for k in knowledge) + ' -->')
             return '\n\n'.join(parts)
-        if 'review' in name and 'global' not in name:
+        if ('review' in name or 'recheck' in name) and 'global' not in name:
             return 'VERDICT: PASS'
         if name.startswith('global-review'):
             return 'VERDICT: PASS\n```csv\nchapter_id,issue\n```'

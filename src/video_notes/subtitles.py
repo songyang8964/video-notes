@@ -6,7 +6,8 @@ Selection rules:
   list by requested language → untagged → others; then speech recognition.
 - a candidate is refused when it looks like something else: fewer than 5 cues, covering
   less than 30% of the running time, extending far past the video, or >30% of cues starting
-  with the previous cue's text (rolling auto-captions that were not de-duplicated).
+  with the previous cue's text (rolling auto-captions that were not de-duplicated). An
+  explicit --srt that only runs past the video (audio longer than a damaged picture) is kept.
 - WebVTT rolling cues are de-duplicated while parsing (each cue repeats the previous lines).
 Every refusal is recorded so a poor transcript can be traced to its source decision.
 """
@@ -103,6 +104,12 @@ def choose(video: Path, duration_ms, work: Path, explicit=None, language=''):
     if explicit:
         cues = read_any(explicit)
         reason = refuse_reason(cues, duration_ms)
+        if reason.startswith('extends far beyond'):
+            # The user vouched for this file: e.g. a meeting recorder's separate audio track that runs
+            # past a damaged video. Cues after the picture are kept and written without images.
+            notes.append(f'{Path(explicit).name} runs past the video until {cues[-1]["end"] // 1000} s; '
+                         'accepted because it was given explicitly')
+            reason = ''
         if reason:
             raise ValueError(f'subtitle {Path(explicit).name} refused: {reason}')
         return Path(explicit), cues, 'explicit', notes
