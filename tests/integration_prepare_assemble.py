@@ -47,7 +47,7 @@ def main(folder):
     log = lambda m: print(m, file=sys.stderr)
     make = lambda: pl.Pipeline(video, folder / 'output-test', load_config(), cwd=folder, log=log)
     briefs = make().prepare()
-    index = json.loads((briefs / 'chapters.json').read_text(encoding='utf-8'))
+    index = json.loads((briefs / 'chapters.json').read_text(encoding='utf-8'))['chapters']
     for thin in (True, False):
         for item in index:
             brief = (briefs / item['chapter'] / 'brief.md').read_text(encoding='utf-8')

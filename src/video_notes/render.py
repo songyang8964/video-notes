@@ -157,7 +157,7 @@ class ConversionUnavailable(RuntimeError):
     pass
 
 
-def to_docx(note: Path):
+def to_docx(note: Path, target: Path = None):
     """Word copy of the note beside it (same name, .docx), images embedded so it can be shared alone.
     Each caption already follows its image as a line of text, so pandoc's automatic figure captions are
     turned off (they would print every caption twice)."""
@@ -165,7 +165,7 @@ def to_docx(note: Path):
         import pypandoc
     except ImportError:
         raise ConversionUnavailable('pandoc is not installed (pip install pypandoc-binary)') from None
-    target = note.with_suffix('.docx')
+    target = target or note.with_suffix('.docx')
     # Screenshots carry small CLI and table text: use the full text width instead of pandoc's
     # resolution-based size (about 4 inches for a 1080p frame). An absolute width, capped by pandoc at the
     # text width: frames from ffmpeg have no DPI metadata, and pandoc then ignores percentage widths.

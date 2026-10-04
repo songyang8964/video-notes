@@ -210,6 +210,7 @@ This lecture is about consensus algorithms. Write the terms as Raft, Paxos, Lead
 
 - **`video-notes` is not found**: it was installed without `-AddToPath`, or the terminal / app was opened before the installation. Open a new terminal, or quit and reopen the Claude / Codex app completely.
 - **`assemble` did not pass**: the reasons per chapter are in `check.md` in the brief folder (for example a subtitle line without a section, a missing important knowledge item, text that is too brief, a missing self-review line for an image). Give it to the AI to fix those chapters and run `assemble` again.
+- **I corrected the subtitles or the video context**: `assemble` reports that the inputs changed; run `video-notes prepare` again first. Chapters already written are kept; chapters whose brief changed as a result are flagged and must be re-checked against the new brief, then `review.md` updated.
 - **It was interrupted**: run the same command again. Screen detection and screenshots are cached, and chapter files already written are not lost.
 - **How long does it take**: the first `prepare` takes roughly a fifth to a third of the video's length (mostly screen detection); later runs reuse the cache. Writing happens in the conversation and uses the conversation's own quota, roughly in proportion to the video's length; for videos over two hours, use several conversations.
 - **There are no subtitles**: generate them with the Colab method below, or install local speech recognition and `prepare` transcribes automatically.

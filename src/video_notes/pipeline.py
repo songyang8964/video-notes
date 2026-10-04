@@ -131,6 +131,20 @@ def review_record_problems(record, frames, knowledge):
     return problems
 
 
+def chapter_index_problem(index, cue_ids):
+    """'' when the chapters, in order, cover every subtitle exactly once; else what is wrong. An empty or
+    truncated index must not produce a 'successful' note that silently leaves part of the video out."""
+    if not index:
+        return 'is empty'
+    for n, item in enumerate(index, 1):
+        if item.get('chapter') != f'C{n:02}':
+            return f"lists {item.get('chapter')} where C{n:02} was expected"
+    covered = [i for item in index for i in range(item['first_cue'], item['last_cue'] + 1)]
+    if covered != list(cue_ids):
+        return f'covers {len(covered)} subtitle lines instead of all {len(cue_ids)} in order'
+    return ''
+
+
 def output_base(out_dir: Path, stem: str):
     """The video's name for <name>.md/.docx and <name>_assets/C01F00000000.jpg, shortened only when the
     longest of those paths would exceed MAX_PATH on Windows without long-path support."""
@@ -283,73 +297,116 @@ class Pipeline:
         base = output_base(out_dir, self.video.stem)  # named after the video, shortened only to fit MAX_PATH
         if base != self.video.stem:
             self.warn(f'note name shortened to "{base}" to stay within the Windows path length limit')
+        stamp_now = time.strftime('%Y%m%d-%H%M%S')
+        prints = self.output_fingerprints()
+
+        def edited(path, key):  # a file we did not write last (or whose content changed since) is the user's
+            return path.is_file() and prints.get(key) != sha256(path)
         target = out_dir / f'{base}.md'
-        fingerprint = self.work / 'output.sha256'
         filename = target.name
-        if target.is_file() and (not fingerprint.is_file() or fingerprint.read_text().strip() != sha256(target)):
-            filename = f'{base}.{time.strftime("%Y%m%d-%H%M%S")}.md'
+        if edited(target, 'md'):
+            filename = f'{base}.{stamp_now}.md'
             self.warn(f'{target} was edited after the last run; the new note is written as {filename}')
         note, inserted = render.assemble(title, [dict(text=r['text'], frames=r['frames']) for r in results.values()],
                                          out_dir, filename, cjk=self.cjk, assets_name=f'{base}_assets')
         if filename == target.name:
-            fingerprint.write_text(sha256(note), encoding='utf-8')
+            prints['md'] = sha256(note)
+        word = out_dir / f'{base}.docx'
+        if filename != target.name:
+            word = note.with_suffix('.docx')
+        elif edited(word, 'docx'):
+            word = out_dir / f'{base}.{stamp_now}.docx'
+            self.warn(f'{out_dir / (base + ".docx")} was edited after the last run; the new Word file is {word.name}')
         try:
-            self.log(f'Word version: {render.to_docx(note)}')
+            self.log(f'Word version: {render.to_docx(note, word)}')
+            if word.name == f'{base}.docx':
+                prints['docx'] = sha256(word)
         except render.ConversionUnavailable as error:
             self.warn(f'Word version not written: {error}')
+        (self.work / 'output.sha256').write_text(json.dumps(prints), encoding='utf-8')
         return note, inserted
+
+    def output_fingerprints(self):
+        """Hashes of the Markdown and Word files this tool wrote last (older runs stored the Markdown only)."""
+        path = self.work / 'output.sha256'
+        if not path.is_file():
+            return {}
+        text = path.read_text(encoding='utf-8').strip()
+        try:
+            return dict(json.loads(text))
+        except ValueError:
+            return {'md': text}
 
     def prepare(self):
         """Media/subtitle checks, detection, chapters and candidate frames; one brief per chapter in
         <work>/briefs/. No model calls. → briefs folder"""
         self.prepare_work()
-        with RunLock(self.work):
-            self.ingest()
-            screens, chapters = self.scan()
-            requested = parse_times(self.settings.get('include_times', ''))
-            briefs = self.work / 'briefs'
-            briefs.mkdir(exist_ok=True)
+        keep_awake(True)  # detection and extraction take minutes; idle sleep would interrupt them
+        try:
+            with RunLock(self.work):
+                return self._prepare()
+        finally:
+            keep_awake(False)
 
-            def pack(item):
-                n, owned = item
-                chapter = f'C{n:02}'
-                start, end = self.chapter_window(n, chapters)
-                directory = self.work / chapter
-                directory.mkdir(exist_ok=True)
-                shortlist = [] if end - start < 1000 else cand_mod.build(
-                    chapter, start, end, screens, self.video, self.picture_ms, directory / 'candidates', cues=owned,
-                    shortlist=self.config['shortlist'], tesseract=self.tesseract,
-                    ocr_langs=self.config['ocr_langs'], requested_ms=requested, log=self.log)[0]
-                folder = briefs / chapter
-                folder.mkdir(exist_ok=True)
-                first = owned[0]['id'] - 1
-                frames = '\n'.join(
-                    f"{f['frame_id']} | {f['time']} | 画面显示 {f.get('screen', '')} | 讲解 {f.get('cues', '')} | "
-                    f"OCR: {f.get('ocr', '')[:160]} | 原图 {f['path']} | 阅读副本 {f.get('read_path', '')}"
-                    for f in shortlist) or '（本章没有可解码的画面：只写文字，不插图）'
-                sheets = '\n'.join(str(p) for p in sorted((directory / 'candidates').glob('sheet-*.jpg'))) or '（无）'
-                brief = fill(prompt_text('brief'), **self.values(
-                    chapter, owned, folder=str(folder), frames=frames, sheets=sheets,
-                    surrounding=cue_text(self.cues[max(0, first - 6):first] + self.cues[owned[-1]['id']:owned[-1]['id'] + 5])))
-                (folder / 'brief.md').write_text(brief, encoding='utf-8')
-                self.log(f'{chapter}: {len(shortlist)} candidate frames; brief {folder / "brief.md"}')
-                return dict(chapter=chapter, first_cue=owned[0]['id'], last_cue=owned[-1]['id'],
-                            start=stamp(owned[0]['start']), end=stamp(owned[-1]['end']), candidates=len(shortlist))
-            with ThreadPoolExecutor(max(1, int(self.config.get('parallel_chapters') or 1))) as pool:
-                index = list(pool.map(pack, enumerate(chapters, 1)))
-            (briefs / 'chapters.json').write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding='utf-8')
-            lines = ['# Chapter briefs', '', f'video: {self.video}', f'work: {self.work}',
-                     f'note language: {self.language}', '',
-                     'For each chapter folder below: read brief.md, then write topics.csv, knowledge.csv, chapter.md '
-                     'and review.md into the same folder. When every chapter is written, run `video-notes assemble` '
-                     'with the same arguments as prepare; failing chapters and the reasons are listed in check.md.',
-                     '', 'Warnings:']
-            lines += [f'- {w}' for w in self.warnings or ['none']] + ['', '| chapter | time | cues | candidates |',
-                                                                      '|---|---|---|---|']
-            lines += [f"| {c['chapter']} | {c['start']}–{c['end']} | C{c['first_cue']}–C{c['last_cue']} | "
-                      f"{c['candidates']} |" for c in index]
-            (briefs / 'README.md').write_text('\n'.join(lines) + '\n', encoding='utf-8')
-            return briefs
+    def prepared_inputs(self):
+        """Everything a brief depends on besides the video (whose hash names the work folder)."""
+        digest = lambda text: hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]
+        return dict(version=__version__, subtitles=self.srt_hash[:16], context=digest(self.context),
+                    templates=digest(prompt_text('rules') + prompt_text('brief')),
+                    settings=dict(language=self.language, chapter_minutes=self.config['chapter_minutes'],
+                                  max_images=self.config['max_images'], shortlist=self.config['shortlist'],
+                                  include_times=self.settings.get('include_times', '')))
+
+    def _prepare(self):
+        self.ingest()
+        screens, chapters = self.scan()
+        requested = parse_times(self.settings.get('include_times', ''))
+        briefs = self.work / 'briefs'
+        briefs.mkdir(exist_ok=True)
+
+        def pack(item):
+            n, owned = item
+            chapter = f'C{n:02}'
+            start, end = self.chapter_window(n, chapters)
+            directory = self.work / chapter
+            directory.mkdir(exist_ok=True)
+            shortlist = [] if end - start < 1000 else cand_mod.build(
+                chapter, start, end, screens, self.video, self.picture_ms, directory / 'candidates', cues=owned,
+                shortlist=self.config['shortlist'], tesseract=self.tesseract,
+                ocr_langs=self.config['ocr_langs'], requested_ms=requested, log=self.log)[0]
+            folder = briefs / chapter
+            folder.mkdir(exist_ok=True)
+            first = owned[0]['id'] - 1
+            frames = '\n'.join(
+                f"{f['frame_id']} | {f['time']} | 画面显示 {f.get('screen', '')} | 讲解 {f.get('cues', '')} | "
+                f"OCR: {f.get('ocr', '')[:160]} | 原图 {f['path']} | 阅读副本 {f.get('read_path', '')}"
+                for f in shortlist) or '（本章没有可解码的画面：只写文字，不插图）'
+            sheets = '\n'.join(str(p) for p in sorted((directory / 'candidates').glob('sheet-*.jpg'))) or '（无）'
+            brief = fill(prompt_text('brief'), **self.values(
+                chapter, owned, folder=str(folder), frames=frames, sheets=sheets,
+                surrounding=cue_text(self.cues[max(0, first - 6):first] + self.cues[owned[-1]['id']:owned[-1]['id'] + 5])))
+            path = folder / 'brief.md'
+            if not path.is_file() or path.read_text(encoding='utf-8') != brief:
+                path.write_text(brief, encoding='utf-8')  # only real changes make written chapters stale
+            self.log(f'{chapter}: {len(shortlist)} candidate frames; brief {folder / "brief.md"}')
+            return dict(chapter=chapter, first_cue=owned[0]['id'], last_cue=owned[-1]['id'],
+                        start=stamp(owned[0]['start']), end=stamp(owned[-1]['end']), candidates=len(shortlist))
+        with ThreadPoolExecutor(max(1, int(self.config.get('parallel_chapters') or 1))) as pool:
+            index = list(pool.map(pack, enumerate(chapters, 1)))
+        (briefs / 'chapters.json').write_text(json.dumps(dict(inputs=self.prepared_inputs(), chapters=index),
+                                                         ensure_ascii=False, indent=2), encoding='utf-8')
+        lines = ['# Chapter briefs', '', f'video: {self.video}', f'work: {self.work}',
+                 f'note language: {self.language}', '',
+                 'For each chapter folder below: read brief.md, then write topics.csv, knowledge.csv, chapter.md '
+                 'and review.md into the same folder. When every chapter is written, run `video-notes assemble` '
+                 'with the same arguments as prepare; failing chapters and the reasons are listed in check.md.',
+                 '', 'Warnings:']
+        lines += [f'- {w}' for w in self.warnings or ['none']] + ['', '| chapter | time | cues | candidates |',
+                                                                  '|---|---|---|---|']
+        lines += [f"| {c['chapter']} | {c['start']}–{c['end']} | C{c['first_cue']}–C{c['last_cue']} | "
+                  f"{c['candidates']} |" for c in index]
+        (briefs / 'README.md').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+        return briefs
 
     def assemble(self):
         """Check the written chapters and assemble the note.
@@ -361,7 +418,17 @@ class Pipeline:
             index_path = briefs / 'chapters.json'
             if not index_path.is_file():
                 raise InputError('no chapter briefs here; run `video-notes prepare` first')
-            index = json.loads(index_path.read_text(encoding='utf-8'))
+            prepared = json.loads(index_path.read_text(encoding='utf-8'))
+            recorded = prepared.get('inputs', {}) if isinstance(prepared, dict) else {}
+            current = self.prepared_inputs()
+            changed = [k for k in current if recorded.get(k) != current[k]]
+            if changed:  # e.g. a corrected subtitle with the same cue IDs: old chapters would pass unchanged
+                raise InputError(f"{', '.join(changed)} changed since prepare; run `video-notes prepare` again. "
+                                 'Written chapters are kept; those whose brief changes must be re-checked.')
+            index = prepared['chapters']
+            index_problem = chapter_index_problem(index, [c['id'] for c in self.cues])
+            if index_problem:
+                raise InputError(f'chapter index {index_problem}; run `video-notes prepare` again')
             cues = {c['id']: c for c in self.cues}
             results, problems = {}, {}
             for item in index:
@@ -370,6 +437,10 @@ class Pipeline:
                            if not (folder / n).is_file()]
                 if missing:
                     problems[chapter] = ['missing ' + ', '.join(missing)]
+                    continue
+                if (folder / 'review.md').stat().st_mtime < (folder / 'brief.md').stat().st_mtime:
+                    problems[chapter] = ['brief.md changed after review.md was written (new subtitles, context or '
+                                         'rules): re-check this chapter against the new brief, then update review.md']
                     continue
                 read = lambda name: list(csv.DictReader(io.StringIO((folder / name).read_text(encoding='utf-8-sig'))))
                 topics, knowledge = read('topics.csv'), read('knowledge.csv')
@@ -398,7 +469,10 @@ class Pipeline:
     def chapter_frames(self, chapter, text, topics):
         """Frames the writer inserted, with the topic of the section that holds each placeholder."""
         table = self.work / chapter / 'candidates' / 'candidates.csv'
-        known = {r['frame_id']: r for r in csv.DictReader(table.open(encoding='utf-8'))} if table.is_file() else {}
+        known = {}
+        if table.is_file():
+            with table.open(encoding='utf-8') as handle:
+                known = {r['frame_id']: r for r in csv.DictReader(handle)}
         frames = []
         for section in re.split(r'(?=^## )', text, flags=re.M):
             m = re.search(r'<!--\s*cues:\s*(\d+)\s*-\s*(\d+)', section)
