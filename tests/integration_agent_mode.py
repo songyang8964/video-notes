@@ -59,7 +59,8 @@ def main(folder):
             print('refused as expected:', problems, file=sys.stderr)
     assert note and not problems, problems
     text = note.read_text(encoding='utf-8')
-    images = re.findall(r'!\[[^\]]*\]\((assets/[^)]+)\)', text)
+    images = re.findall(r'!\[[^\]]*\]\(<?([^)<>]*_assets/C\d\dF\d+\.jpg)>?\)', text)
+    assert note.with_suffix('.docx').is_file(), 'Word copy missing'
     assert images and all((note.parent / i).is_file() for i in images), 'images missing'
     assert '[[frame:' not in text
     assert not (agent.parent / 'model-calls').exists() or not any((agent.parent / 'model-calls').iterdir()), \

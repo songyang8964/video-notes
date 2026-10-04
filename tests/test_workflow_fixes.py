@@ -1,55 +1,10 @@
-"""Regression tests for problems found in review of the parallel/resumable workflow."""
-import hashlib
+"""Regression tests for output naming, image cleanup and the agent self-review record."""
 import tempfile
-import threading
 import unittest
 from pathlib import Path
 
-from video_notes import llm, render
+from video_notes import render
 from video_notes.pipeline import review_record_problems
-
-
-def model(cache, fallback=('codex', 'm2', 'low')):
-    m = llm.Model.__new__(llm.Model)
-    m.backend, m.model, m.effort, m.exe, m.timeout, m.log = 'claude', 'm1', 'medium', 'claude', 5, lambda s: None
-    m.cache, m.calls, m.fallback, m._lock, m.usage = Path(cache), 0, fallback, threading.Lock(), {}
-    m.service_tier = None
-    m.reuse = ['claude:m1:medium', 'codex:m2:low']
-    return m
-
-
-class ParallelFallbackTests(unittest.TestCase):
-    def test_simultaneous_usage_limits_switch_once_and_store_under_the_real_backend(self):
-        with tempfile.TemporaryDirectory() as d:
-            m = model(d)
-            both_failed = threading.Barrier(2)
-
-            def run(prompt, images, target, log_path, state):
-                if state[0] == 'claude':
-                    log_path.write_text("You've hit your usage limit", encoding='utf-8')
-                    both_failed.wait(timeout=5)  # both threads fail on claude before either switches
-                    return ''
-                return f'{state[0]}:{prompt}'
-            m._run = run
-            original, llm.resolve = llm.resolve, (lambda backend: backend)
-            results, errors = {}, []
-
-            def ask(name):
-                try:
-                    results[name] = m.ask(name, name)
-                except Exception as error:  # the old code raised TypeError: 'NoneType' is not subscriptable
-                    errors.append(error)
-            try:
-                threads = [threading.Thread(target=ask, args=(n,)) for n in ('C01-write', 'C02-write')]
-                [t.start() for t in threads]
-                [t.join(timeout=20) for t in threads]
-            finally:
-                llm.resolve = original
-            self.assertEqual(errors, [])
-            self.assertEqual(results, {'C01-write': 'codex:C01-write', 'C02-write': 'codex:C02-write'})
-            for name in results:  # stored under the identity of the backend that produced the reply
-                key = hashlib.sha256('\0'.join(['codex:m2:low', name]).encode()).hexdigest()[:16]
-                self.assertTrue((Path(d) / f'{name}-{key}.ok').is_file())
 
 
 class PreservedNoteImageTests(unittest.TestCase):
@@ -80,23 +35,33 @@ class AgentReviewRecordTests(unittest.TestCase):
         self.assertEqual(review_record_problems(good, self.frames, self.knowledge), [])
 
 
-class FallbackProbeTests(unittest.TestCase):
-    def test_probe_uses_the_run_service_tier(self):
-        import subprocess
-        seen = {}
-        original_run, original_resolve = subprocess.run, llm.resolve
-        llm.resolve = lambda backend: 'codex'
-
-        def fake(command, **kw):
-            seen['command'] = command
-            return subprocess.CompletedProcess(command, 0, 'OK', '')
-        subprocess.run = fake
-        try:
-            self.assertEqual(llm.probe('codex', 'm', 'low', service_tier='fast'), (True, 'signed in'))
-        finally:
-            subprocess.run, llm.resolve = original_run, original_resolve
-        self.assertIn('service_tier="fast"', seen['command'])
-
-
 if __name__ == '__main__':
     unittest.main()
+
+
+class VideoNamedOutputTests(unittest.TestCase):
+    def test_note_named_after_video_with_spaces_and_brackets(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d)
+            img = out / 'f.jpg'
+            Image.new('RGB', (64, 36), 'white').save(img)
+            stem = '【EU DCN】 Course (Part 2) 20261002'
+            frame = dict(frame_id='C01F00000002', path=str(img), actual_ms=1000)
+            note, _ = render.assemble('T', [dict(text='# A\n\n[[frame:C01F00000002|cap]]', frames=[frame])], out,
+                                      f'{stem}.md', assets_name=f'{stem}_assets')
+            self.assertIn(f'](<{stem}_assets/C01F00000002.jpg>)', note.read_text(encoding='utf-8'))
+            self.assertTrue((out / f'{stem}_assets' / 'C01F00000002.jpg').is_file())
+            docx = render.to_docx(note)
+            import zipfile
+            with zipfile.ZipFile(docx) as z:  # the image is embedded, not linked
+                self.assertTrue(any(n.startswith('word/media/') for n in z.namelist()))
+
+    def test_long_names_are_shortened_to_fit_windows_paths(self):
+        import os
+        from video_notes import pipeline
+        base = pipeline.output_base(Path('C:/' + 'x' * 150), 'y' * 100)
+        if os.name == 'nt' and not pipeline._long_paths_enabled():
+            self.assertLess(len(base), 100)
+            self.assertLessEqual(len(str(Path('C:/' + 'x' * 150) / f'{base}_assets' / 'C01F00000000.jpg')), 259)
+        self.assertEqual(pipeline.output_base(Path('C:/v'), 'short'), 'short')

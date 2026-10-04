@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "video-notes"
-version = "0.1.0"
-description = "Turn a local lecture or training video into an illustrated, shareable Markdown note."
+version = "0.2.0"
+description = "Turn a local lecture or training video into an illustrated, shareable note (Markdown and Word) written by an assistant in a chat; the tool itself calls no model."
 readme = "README.md"
 requires-python = ">=3.10"
 license-files = ["NOTICE"]
@@ -17,6 +17,7 @@ dependencies = [
     "scikit-image>=0.22",
     "scenedetect>=0.6.4",
     "opencv-python-headless>=4.8",
+    "pypandoc-binary>=1.13",  # Word copy of the note
 ]
 
 [project.optional-dependencies]
