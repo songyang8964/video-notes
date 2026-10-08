@@ -20,13 +20,38 @@ flowchart LR
 
 ## Contents
 
-1. [Preparation (once)](#preparation-once)
-2. [Step 1: Get subtitles](#step-1-get-subtitles)
-3. [Step 2: Let the AI write the notes](#step-2-let-the-ai-write-the-notes)
-4. [Step 3: Get the notes](#step-3-get-the-notes)
-5. [FAQ](#faq)
-6. [Advanced](#advanced)
-7. [Development and tests](#development-and-tests)
+1. [Example output](#example-output)
+2. [Preparation (once)](#preparation-once)
+3. [Step 1: Get subtitles](#step-1-get-subtitles)
+4. [Step 2: Let the AI write the notes](#step-2-let-the-ai-write-the-notes)
+5. [Step 3: Get the notes](#step-3-get-the-notes)
+6. [FAQ](#faq)
+7. [Advanced](#advanced)
+8. [Development and tests](#development-and-tests)
+
+---
+
+## Example output
+
+The note follows the original teaching order, chapter by chapter and topic by topic, and explains each topic in full; screenshots sit next to the explanation they support, with the original video time after the caption. Structure:
+
+```markdown
+# Course title
+
+## Chapter 1: … (named after its content)
+
+### Topic A
+A full explanation: background → mechanism → conditions → steps → result → caveats …
+
+![Topology: how the three core devices are interconnected](course_assets/C01F00127742.jpg)
+
+*Topology: how the three core devices are interconnected (source video 00:02:07.742)*
+
+### Topic B
+…
+```
+
+Copy, zip or upload `course.md` together with `course_assets/` and the images stay intact; `course.docx` has the images embedded and can be sent on its own.
 
 ---
 
@@ -197,10 +222,162 @@ The config file is `~/.video-notes/config.json` (Windows: `%USERPROFILE%\.video-
 | `max_images` | 8 | Maximum images per chapter |
 | `shortlist` | 32 | Maximum distinct screens listed in a chapter brief |
 | `chapter_minutes` | 10 | Target chapter length (minutes) |
+| `use_adaptive` | true | Use the PySceneDetect helper detector (more complete, slightly slower) |
 | `parallel_chapters` | 3 | Chapters whose candidate frames are captured at the same time |
 | `min_chars_per_minute` | 100 | Minimum level of detail |
 | `tesseract` / `ocr_langs` | empty / `eng` | OCR program path and languages (optional, better candidate ranking) |
 | `asr_backend` / `asr_model` / `whisperx` | auto / `large-v3` / empty | Local transcription settings |
+
+### How it works
+
+`prepare` and `assemble` are local programs (FFmpeg, PyAV, image processing) and call no model; understanding the content, choosing images, writing and self-review are done by the AI in the conversation.
+
+```mermaid
+flowchart TD
+    V["course.mp4"] --> S{"Subtitles?"}
+    SUB["same-name subtitles<br/>or embedded track"] --> S
+    S -- yes --> CUES["Subtitles"]
+    S -- no --> ASR["Speech recognition<br/>local or Colab"] --> CUES
+    V --> DET["① Screen detection<br/>once per video"]
+    CUES --> CH["② Chapters<br/>about 10 min"]
+    DET --> CH
+    CH --> C["③ Candidate screenshots<br/>chapter briefs"]
+    subgraph AI["AI in the conversation, each chapter"]
+        W["④ Topics, knowledge inventory<br/>images, text, self-review"]
+    end
+    C --> W
+    W --> CHK{"⑤ assemble<br/>checks"}
+    CHK -- fail --> W
+    CHK -- pass --> OUT["Write .md and .docx"]
+```
+
+#### Subtitle choice and transcription
+
+The tool finds the dialogue that really belongs to this video:
+
+- Candidates, in order: the file given with `--srt`; `.srt` / `.vtt` files with the same name as the video (such as `course.srt`, `course.en.vtt`); text subtitle tracks embedded in the video. Same-name subtitles are ranked by language: requested language → untagged → other languages.
+- These subtitles are refused and the reason is recorded: fewer than 5 lines; covering less than 30% of the running time (often "forced" subtitles that only translate foreign-language parts); times far beyond the video's length (made for a different edit); more than 30% of lines starting with the previous line's text (rolling auto-captions that were not de-duplicated).
+- WebVTT rolling captions are de-duplicated while parsing (each cue repeats the previous one).
+- Subtitles given with `--srt` are an explicit demand: if they are unusable the run stops instead of quietly switching to another source. Subtitles that merely run past the picture (a damaged recording whose audio is longer than its video) are still used.
+- Without usable subtitles, the video is transcribed locally (WhisperX → faster-whisper → openai-whisper, whichever is installed). Without an NVIDIA GPU local transcription is slow; Colab is recommended (see step 1).
+
+#### ① Screen-change detection
+
+The core images of a lecture are slides, topology diagrams, code and command lines. Detection answers one question: **when did the screen change**.
+
+- **Excluding overlay bands**: first the change frequency of every pixel row is measured. Bands at the top or bottom edge that change far more often than the content (burnt-in subtitles, scrolling banners) are excluded; otherwise every new subtitle line would look like a new slide.
+- **Three signals** (measured frame by frame on small greyscale images):
+  - *anchor drift*: mean difference between the current frame and the last stable screen, catching a board that fills up or code that appears line by line;
+  - *abrupt area*: share of pixels that change clearly between neighbouring frames, catching page turns and switches;
+  - *instant change*: mean difference between neighbouring frames, used both to detect motion and to decide that the screen has settled and can be captured.
+- **Helper detector**: the optional adaptive detector of PySceneDetect adds more switch times.
+- **Events and capture points**: peaks of the signals within 0.5 s are merged into one screen-change event. For each event two stable frames are found: before the change (the **finished state** of the old screen) and after it (the **start** of the new one). When the start and the finished state of a screen are almost the same (SSIM ≥ 0.93), only the start is kept, as for a static slide; when they clearly differ both are kept, as for a diagram that builds up or a command that has been typed.
+- **Frame rate from real timestamps**: screen recordings often have a variable frame rate, nominally 60 fps but really about 15 fps. All times follow the real timestamps.
+- **Damaged recordings**: when the picture can only be decoded up to some point, that end is recorded and no screenshots are taken after it; the subtitles are still used.
+
+Detection flow:
+
+```mermaid
+flowchart TD
+    F["Decode every frame<br/>small greyscale"] --> B["Drop subtitle<br/>and banner bands"]
+    B --> S1["Anchor drift"]
+    B --> S2["Abrupt area"]
+    B --> S3["Instant change"]
+    S1 & S2 & S3 --> M["Merge into<br/>one screen change"]
+    AD["Helper detector"] --> M
+    M --> E["Find stable frames<br/>before and after"]
+    E --> K{"Almost the same?"}
+    K -- yes --> ONE["Keep the start"]
+    K -- no --> TWO["Start + finished"]
+```
+
+Which screenshots one slide change yields (a slide whose bullet points appear one by one):
+
+| Moment | On screen | Screenshot |
+| --- | --- | --- |
+| Slide A just appeared | only the title | ① A start |
+| Bullets appear one by one | changes accumulate slowly, not a page turn | — |
+| Before the page turn | all bullets visible | ② A finished |
+| Stable after the turn | slide B | ③ B start |
+
+- ① and ② differ clearly, so both become candidates; the AI usually picks ②, which carries the most information.
+- If A is a static slide, ① and ② are almost identical and only ① is kept.
+- When A stays on screen for a long time, a "heartbeat" screenshot is added every 20 seconds so that small changes are not missed.
+
+The whole video is decoded only twice for measuring and once for the helper detector; all start/finished comparisons happen in **one sequential decode**, not in thousands of random seeks. The results are cached and used chapter by chapter.
+
+#### ② Chapters
+
+The target is about 10 minutes per chapter (configurable). In the last quarter of each window the cut is made at the subtitle boundary with the **longest pause**, preferably **close to a screen change**, so that a topic is not split in the middle.
+
+#### ③ Candidate screenshots
+
+- Candidate times come from: the start and finished frames of screen changes; one frame every 20 seconds inside screens that stay unchanged for long (catching small changes such as one more line in a terminal); times listed in `include_times` in the video context.
+- Every candidate is **captured from the original video at full resolution by its real timestamp**, and the actual frame time is recorded.
+- **Quality filter**: frames that are too dark, too bright, blurred (low Laplacian variance, as in fades) or almost blank are dropped, with the reason recorded.
+- **OCR (optional, needs Tesseract)**: the central content area and the bottom subtitle area are read separately to compute "text novelty": content text that appears and stays weighs most; brief flickers and subtitle changes weigh little.
+- **Merging duplicate screens**: candidates are shrunk to 320×180 greyscale and compared; if fewer than 1% of pixels change clearly they are the same screen and only one is kept (requested times first, then finished states); a slide shown for only about a second and flipped past quickly is still kept. All distinct screens go into the brief; only when a chapter has more than 32 are they trimmed to 32 by a diversity selection using change strength, text novelty, sharpness, similarity to already chosen frames and spread over time.
+- Every candidate carries **what was said while that screen was shown** (a range of subtitle numbers), so the AI can judge whether picture and text belong together.
+- The brief gives the original, a reading copy with a 1280-pixel long edge and contact sheets (thumbnail overviews); for commands, parameters and numbers the AI opens the original.
+
+```mermaid
+flowchart TD
+    A["Candidate times"] --> B["Capture original"]
+    B --> Q{"Good quality?"}
+    Q -- no --> R1["Dropped"]
+    Q -- yes --> D{"Same as a screen<br/>already kept?"}
+    D -- yes --> R2["Merged"]
+    D -- no --> SH["Shortlisted<br/>up to 32 per chapter"]
+    SH --> M["AI picks key images<br/>up to 8"]
+    M --> N["Placed in the text"]
+```
+
+#### ④ Writing and self-review (the AI in the conversation)
+
+Following each chapter's `brief.md`, the AI:
+
+- assigns every subtitle line to a **topic**, or marks it off topic with a reason (`topics.csv`);
+- builds a fine-grained **knowledge inventory**: definitions, mechanisms, conditions, reasons, comparisons, examples, commands, configuration steps, verification results, risks, rollback and worthwhile Q&A, each marked important or supporting (`knowledge.csv`);
+- **picks key images**: only structure diagrams, flowcharts, comparisons, tables, key commands or results needed for understanding; one image per slide, the most complete one; no title, agenda, text-only or speaker-only screens; at most 8 per chapter, and a chapter may have none; important information on screens that were not chosen goes into the text;
+- **writes the text** in the original teaching order, one section per topic, with images next to their explanation (`chapter.md`);
+- **reviews itself**: what was checked on the original for each image, and where each important item is explained (`review.md`).
+
+#### ⑤ Checks and output
+
+`assemble` first confirms that the subtitles and the video context are the same as at `prepare` and that each chapter's review is newer than its brief, then runs the [quality checks](#quality-checks) on every chapter. When all pass, the chapters are joined into one note, image placeholders become relative links to the original screenshots with the original video time after each caption, the chosen originals are copied to `<video name>_assets/`, and pandoc writes a Word file with the images embedded. If the previous output was edited by hand it is not overwritten; the new result is saved separately.
+
+### Internal files
+
+```
+<folder where the command runs>/.work/video-notes/<hash>/    ← can be deleted (the cache is lost)
+  source.json        input hashes, subtitle source and why it was chosen, media info
+  detect/            screen-detection signals and cached results
+  C01/ C02/ ...      candidate screenshots per chapter: originals, reading copies, contact sheets, candidates.csv
+  briefs/
+    README.md        chapter list and writing instructions
+    chapters.json    chapter ranges and input fingerprints
+    C01/ C02/ ...    brief.md, plus topics.csv, knowledge.csv, chapter.md, review.md written by the AI
+    check.md         assemble check results
+  output.sha256      fingerprints of the last output, to tell whether the note was edited by hand
+```
+
+On Windows, when the video's folder is very deep (such as a meeting app's recording folder), the internal files go to `%USERPROFILE%\.video-notes\work\<hash>` to stay within the 260-character path limit. Only one run at a time is allowed per work folder.
+
+### Time and resources
+
+For a recording of about 2 hours 40 minutes, 1080p, with subtitles (ordinary laptop CPU):
+
+| Stage | Time |
+| --- | --- |
+| Screen signal measurement (two decodes) | about 10 minutes |
+| Helper detector (one decode) | about 20 minutes |
+| Start/finished comparison (one sequential decode) | about 10 minutes |
+| Candidate screenshots and filtering | 10 to 30 minutes, depending on the number of screen changes |
+| Writing chapter by chapter in the conversation | depends on the AI's speed and the conversation's quota |
+
+- Screen detection runs only at the first `prepare`; later runs use the cache. Turning off `use_adaptive` skips the helper detector but may miss a few switches.
+- By default 3 chapters capture candidates at the same time; the computer is kept awake while `prepare` runs.
+- Memory: detection streams frame by frame, so memory use does not grow with the video's length.
 
 ---
 
