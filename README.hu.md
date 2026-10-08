@@ -20,13 +20,38 @@ flowchart LR
 
 ## Tartalom
 
-1. [Előkészületek (egyszer)](#előkészületek-egyszer)
-2. [1. lépés: Felirat készítése](#1-lépés-felirat-készítése)
-3. [2. lépés: Az MI megírja a jegyzetet](#2-lépés-az-mi-megírja-a-jegyzetet)
-4. [3. lépés: A kész jegyzet](#3-lépés-a-kész-jegyzet)
-5. [Gyakori kérdések](#gyakori-kérdések)
-6. [Haladó](#haladó)
-7. [Fejlesztés és tesztek](#fejlesztés-és-tesztek)
+1. [Példa az eredményre](#példa-az-eredményre)
+2. [Előkészületek (egyszer)](#előkészületek-egyszer)
+3. [1. lépés: Felirat készítése](#1-lépés-felirat-készítése)
+4. [2. lépés: Az MI megírja a jegyzetet](#2-lépés-az-mi-megírja-a-jegyzetet)
+5. [3. lépés: A kész jegyzet](#3-lépés-a-kész-jegyzet)
+6. [Gyakori kérdések](#gyakori-kérdések)
+7. [Haladó](#haladó)
+8. [Fejlesztés és tesztek](#fejlesztés-és-tesztek)
+
+---
+
+## Példa az eredményre
+
+A jegyzet az eredeti magyarázat sorrendjét követi fejezetenként és témakörönként, és minden témakört teljesen kifejt; a képkockák az általuk alátámasztott magyarázat mellé kerülnek, a képaláírás után az eredeti videóbeli idővel. Szerkezet:
+
+```markdown
+# A kurzus címe
+
+## 1. fejezet: … (a tartalma alapján elnevezve)
+
+### A témakör
+Teljes magyarázat: háttér → működés → feltételek → lépések → eredmény → figyelmeztetések …
+
+![Topológia: a három maghálózati eszköz összeköttetése](kurzus_assets/C01F00127742.jpg)
+
+*Topológia: a három maghálózati eszköz összeköttetése (eredeti videó 00:02:07.742)*
+
+### B témakör
+…
+```
+
+A `kurzus.md` fájlt a `kurzus_assets/` mappával együtt másold, tömörítsd vagy töltsd fel, így a képek megmaradnak; a `kurzus.docx` beágyazva tartalmazza a képeket, önmagában is elküldhető.
 
 ---
 
@@ -197,10 +222,162 @@ A beállítófájl: `~/.video-notes/config.json` (Windows: `%USERPROFILE%\.video
 | `max_images` | 8 | Képek maximális száma fejezetenként |
 | `shortlist` | 32 | Egy fejezetcsomagban felsorolt különböző képernyők legnagyobb száma |
 | `chapter_minutes` | 10 | Célzott fejezethossz (perc) |
+| `use_adaptive` | true | A PySceneDetect segédérzékelő használata (teljesebb, kicsit lassabb) |
 | `parallel_chapters` | 3 | Egyszerre rögzített jelöltképű fejezetek száma |
 | `min_chars_per_minute` | 100 | A részletesség alsó határa |
 | `tesseract` / `ocr_langs` | üres / `eng` | Az OCR program útvonala és nyelvei (opcionális, jobb jelöltrangsor) |
 | `asr_backend` / `asr_model` / `whisperx` | automatikus / `large-v3` / üres | Helyi átírás beállításai |
+
+### Működés
+
+A `prepare` és az `assemble` helyi program (FFmpeg, PyAV, képfeldolgozás), és nem hív meg modellt; a tartalom megértését, a képválasztást, az írást és az önellenőrzést a beszélgetésben részt vevő MI végzi.
+
+```mermaid
+flowchart TD
+    V["kurzus.mp4"] --> S{"Van felirat?"}
+    SUB["azonos nevű felirat<br/>vagy beágyazott sáv"] --> S
+    S -- igen --> CUES["Felirat"]
+    S -- nem --> ASR["Beszédfelismerés<br/>helyben vagy Colabban"] --> CUES
+    V --> DET["① Képernyőfigyelés<br/>videónként egyszer"]
+    CUES --> CH["② Fejezetek<br/>kb. 10 perc"]
+    DET --> CH
+    CH --> C["③ Jelölt képkockák<br/>fejezetcsomagok"]
+    subgraph AI["MI a beszélgetésben, fejezetenként"]
+        W["④ Témakörök, tudásleltár<br/>képek, szöveg, önellenőrzés"]
+    end
+    C --> W
+    W --> CHK{"⑤ assemble<br/>ellenőrzés"}
+    CHK -- sikertelen --> W
+    CHK -- sikeres --> OUT[".md és .docx"]
+```
+
+#### Feliratválasztás és átírás
+
+Az eszköz megkeresi azt a beszédszöveget, amely valóban ehhez a videóhoz tartozik:
+
+- A jelöltek sorrendben: a `--srt` kapcsolóval megadott fájl; a videóval azonos nevű `.srt` / `.vtt` fájlok (például `kurzus.srt`, `kurzus.en.vtt`); a videóba ágyazott szöveges feliratsávok. Az azonos nevű feliratok nyelv szerint rangsorolódnak: kért nyelv → nyelvjelölés nélküli → egyéb nyelvek.
+- Az alábbi feliratokat a program elutasítja, és rögzíti az okát: 5-nél kevesebb sor; a játékidő kevesebb mint 30%-át fedi le (gyakran „kényszerített” felirat, amely csak az idegen nyelvű részeket fordítja); az időpontok messze túlnyúlnak a videó hosszán (más vágáshoz készült); a sorok több mint 30%-a az előző sor szövegével kezdődik (duplikációmentesítés nélküli, gördülő automatikus felirat).
+- A WebVTT gördülő feliratait a program már beolvasáskor duplikációmentesíti (minden sor megismétli az előzőt).
+- A `--srt` kapcsolóval megadott felirat kifejezett kérés: ha használhatatlan, a futás leáll, és nem vált csendben más forrásra. Ha csak túlnyúlik a képen (sérült felvétel, amelynek hangja hosszabb a képnél), akkor is használja.
+- Használható felirat nélkül a program helyben átírja a videót (WhisperX → faster-whisper → openai-whisper, amelyik telepítve van). NVIDIA GPU nélkül a helyi átírás lassú; a Colab ajánlott (lásd: 1. lépés).
+
+#### ① Képernyőváltás-figyelés
+
+Az előadások fő képei a diák, topológiai ábrák, kód és parancssor. A figyelés egyetlen kérdésre felel: **mikor változott a képernyő**.
+
+- **Takaró sávok kizárása**: először a program minden képpontsor változási gyakoriságát méri. A kép felső vagy alsó szélén lévő, a tartalomnál jóval gyakrabban változó sávokat (beégetett felirat, gördülő szalag) kizárja, különben minden új feliratsor diaváltásnak tűnne.
+- **Három jel** (képkockánként mérve, kis szürkeárnyalatos képen):
+  - *horgonyeltolódás*: az aktuális képkocka átlagos eltérése az utolsó stabil képernyőtől; a fokozatosan teleírt táblát vagy a soronként megjelenő kódot fogja meg;
+  - *hirtelen terület*: a szomszédos képkockák között egyértelműen változó képpontok aránya; a lapozást és a váltásokat fogja meg;
+  - *pillanatnyi változás*: a szomszédos képkockák átlagos eltérése; a mozgás észlelésére és annak eldöntésére szolgál, hogy a képernyő megnyugodott-e és rögzíthető-e.
+- **Segédérzékelő**: a PySceneDetect opcionális adaptív érzékelője további váltási időpontokat ad.
+- **Események és rögzítési pontok**: a jelek 0,5 másodpercen belüli csúcsai egy képernyőváltási eseménnyé olvadnak össze. Minden eseményhez két stabil képkocka tartozik: a váltás előtti (a régi képernyő **kész állapota**) és utáni (az új képernyő **kezdete**). Ha egy képernyő kezdete és kész állapota szinte azonos (SSIM ≥ 0,93), csak a kezdet marad meg, mint egy statikus diánál; ha egyértelműen eltérnek, mindkettő megmarad, mint egy fokozatosan felépülő ábránál vagy egy begépelt parancsnál.
+- **Képkockasebesség a valódi időbélyegekből**: a képernyőfelvételek képkockasebessége gyakran változó, névlegesen 60 fps, valójában kb. 15 fps. Minden időpont a valódi időbélyegeket követi.
+- **Sérült felvételek**: ha a kép csak egy adott pontig dekódolható, a program rögzíti ezt a végpontot, és utána nem készít képkockát; a feliratot továbbra is használja.
+
+A figyelés menete:
+
+```mermaid
+flowchart TD
+    F["Minden képkocka dekódolása<br/>kis szürke kép"] --> B["Felirat- és<br/>szalagsávok kizárása"]
+    B --> S1["Horgonyeltolódás"]
+    B --> S2["Hirtelen terület"]
+    B --> S3["Pillanatnyi változás"]
+    S1 & S2 & S3 --> M["Összevonás<br/>egy képernyőváltássá"]
+    AD["Segédérzékelő"] --> M
+    M --> E["Stabil képkockák<br/>előtte és utána"]
+    E --> K{"Szinte azonos?"}
+    K -- igen --> ONE["Csak a kezdet"]
+    K -- nem --> TWO["Kezdet + kész"]
+```
+
+Milyen képkockákat ad egy diaváltás (egy dia, amelynek pontjai egyenként jelennek meg):
+
+| Pillanat | A képernyőn | Képkocka |
+| --- | --- | --- |
+| Az A dia épp megjelent | csak a cím | ① A kezdete |
+| A pontok egyenként megjelennek | a változás lassan gyűlik, nem lapozás | — |
+| Lapozás előtt | minden pont látható | ② A kész |
+| Lapozás után, stabilan | B dia | ③ B kezdete |
+
+- ① és ② egyértelműen eltér, így mindkettő jelölt lesz; az MI általában a legtöbb információt hordozó ②-t választja.
+- Ha A statikus dia, ① és ② szinte azonos, csak ① marad meg.
+- Ha A sokáig a képernyőn marad, 20 másodpercenként egy „szívverés” képkocka is készül, hogy apró változások se maradjanak ki.
+
+A teljes videót a program csak kétszer dekódolja a méréshez és egyszer a segédérzékelőhöz; az összes kezdet/kész összehasonlítás **egyetlen soros dekódolásban** történik, nem több ezer véletlenszerű ugrással. Az eredmények gyorsítótárba kerülnek, és fejezetenként használja fel őket.
+
+#### ② Fejezetek
+
+A cél fejezetenként kb. 10 perc (beállítható). Minden ablak utolsó negyedében a program annál a felirathatárnál vág, ahol **a leghosszabb a szünet**, lehetőleg **egy képernyőváltás közelében**, hogy egy témakör ne szakadjon ketté.
+
+#### ③ Jelölt képkockák
+
+- A jelölt időpontok forrásai: a képernyőváltások kezdő és kész képkockái; a sokáig változatlan képernyőkön 20 másodpercenként egy képkocka (apró változásokhoz, például egy új sorhoz a terminálban); a videókontextus `include_times` mezőjében megadott időpontok.
+- Minden jelölt **az eredeti videóból, teljes felbontásban, a valódi időbélyeg alapján készül**, és a tényleges képkockaidő rögzítésre kerül.
+- **Minőségszűrés**: a túl sötét, túl világos, elmosódott (alacsony Laplace-variancia, például áttűnésnél) vagy szinte üres képkockák kiesnek, az ok rögzítésével.
+- **OCR (opcionális, Tesseract szükséges)**: a középső tartalmi és az alsó feliratterületet külön olvassa be, és kiszámítja a „szövegújdonságot”: az újonnan megjelenő és megmaradó tartalmi szöveg számít a legtöbbet; a villanásnyi változások és a feliratváltások keveset.
+- **Ismétlődő képernyők összevonása**: a jelöltek 320×180-as szürke képként kerülnek összehasonlításra; ha a képpontok kevesebb mint 1%-a változik egyértelműen, ugyanaz a képernyő, és csak egy marad meg (előbb a kért időpontok, aztán a kész állapotok); a csak kb. egy másodpercig látható, gyorsan átlapozott dia is megmarad. Minden különböző képernyő bekerül a csomagba; csak ha egy fejezetben 32-nél több van, akkor szűkíti 32-re egy változatossági válogatás a változás erőssége, a szövegújdonság, az élesség, a már kiválasztottakhoz való hasonlóság és az időbeli eloszlás alapján.
+- Minden jelölthöz tartozik, **mi hangzott el, amíg az a képernyő látható volt** (feliratszám-tartomány), így az MI meg tudja ítélni, hogy kép és szöveg összetartozik-e.
+- A csomag megadja az eredetit, egy 1280 képpont hosszú oldalú olvasási másolatot és áttekintő lapokat (bélyegképek); parancsoknál, paramétereknél és számoknál az MI megnyitja az eredetit.
+
+```mermaid
+flowchart TD
+    A["Jelölt időpontok"] --> B["Eredeti rögzítése"]
+    B --> Q{"Jó minőség?"}
+    Q -- nem --> R1["Kiesik"]
+    Q -- igen --> D{"Azonos egy már<br/>megtartott képpel?"}
+    D -- igen --> R2["Összevonva"]
+    D -- nem --> SH["Szűkített lista<br/>fejezetenként max. 32"]
+    SH --> M["Az MI kulcsképeket választ<br/>max. 8"]
+    M --> N["A szövegbe kerül"]
+```
+
+#### ④ Írás és önellenőrzés (az MI a beszélgetésben)
+
+Az egyes fejezetek `brief.md` fájlja alapján az MI:
+
+- minden feliratsort egy **témakörhöz** rendel, vagy indoklással témán kívülinek jelöl (`topics.csv`);
+- részletes **tudásleltárt** készít: definíciók, működés, feltételek, okok, összehasonlítások, példák, parancsok, konfigurációs lépések, ellenőrzési eredmények, kockázatok, visszaállítás és értékes kérdések-válaszok, mindegyik fontosként vagy kiegészítőként jelölve (`knowledge.csv`);
+- **kulcsképeket választ**: csak a megértéshez szükséges szerkezeti ábrákat, folyamatábrákat, összehasonlításokat, táblázatokat, kulcsparancsokat vagy eredményeket; diánként egyet, a legteljesebbet; címlap, napirend, csak szöveges vagy csak előadót mutató képernyő nem kerül be; fejezetenként legfeljebb 8, és egy fejezet kép nélkül is maradhat; a nem választott képernyők fontos információi a szövegbe kerülnek;
+- **megírja a szöveget** az eredeti magyarázat sorrendjében, témakörönként egy szakasszal, a képeket a magyarázatuk mellé helyezve (`chapter.md`);
+- **ellenőrzi magát**: minden képnél mit ellenőrzött az eredetin, és hol van kifejtve minden fontos elem (`review.md`).
+
+#### ⑤ Ellenőrzés és kimenet
+
+Az `assemble` először megerősíti, hogy a felirat és a videókontextus ugyanaz, mint a `prepare` idején, és hogy minden fejezet önellenőrzése újabb a csomagjánál, majd minden fejezeten lefuttatja a [minőségellenőrzést](#minőségellenőrzés). Ha minden sikeres, a fejezetek egy jegyzetté állnak össze, a képhelyőrzők az eredeti képkockákra mutató relatív hivatkozásokká válnak, minden képaláírás után az eredeti videóbeli idővel, a kiválasztott eredetik a `<videó neve>_assets/` mappába kerülnek, a pandoc pedig beágyazott képekkel Word fájlt készít. Ha az előző kimenetet kézzel módosították, nem íródik felül; az új eredmény külön kerül mentésre.
+
+### Belső fájlok
+
+```
+<a parancs futtatási mappája>/.work/video-notes/<hash>/    ← törölhető (a gyorsítótár elvész)
+  source.json        bemeneti hash-ek, a felirat forrása és választásának oka, médiaadatok
+  detect/            képernyőfigyelési jelek és gyorsítótárazott eredmények
+  C01/ C02/ ...      jelölt képkockák fejezetenként: eredetik, olvasási másolatok, áttekintő lapok, candidates.csv
+  briefs/
+    README.md        fejezetlista és írási útmutató
+    chapters.json    fejezettartományok és bemeneti ujjlenyomatok
+    C01/ C02/ ...    brief.md, valamint az MI által írt topics.csv, knowledge.csv, chapter.md, review.md
+    check.md         az assemble ellenőrzési eredményei
+  output.sha256      az utolsó kimenet ujjlenyomatai, annak megállapítására, hogy kézzel módosították-e
+```
+
+Windowson, ha a videó mappája nagyon mélyen van (például egy értekezletalkalmazás felvételi mappája), a belső fájlok a `%USERPROFILE%\.video-notes\work\<hash>` mappába kerülnek, hogy a 260 karakteres útvonalkorláton belül maradjanak. Munkamappánként egyszerre csak egy futás engedélyezett.
+
+### Idő és erőforrások
+
+Egy kb. 2 óra 40 perces, 1080p-s, felirattal rendelkező felvétel esetén (átlagos laptop-CPU):
+
+| Szakasz | Idő |
+| --- | --- |
+| Képernyőjelek mérése (két dekódolás) | kb. 10 perc |
+| Segédérzékelő (egy dekódolás) | kb. 20 perc |
+| Kezdet/kész összehasonlítás (egy soros dekódolás) | kb. 10 perc |
+| Jelölt képkockák és szűrés | 10–30 perc, a képernyőváltások számától függően |
+| Fejezetenkénti írás a beszélgetésben | az MI sebességétől és a beszélgetés keretétől függ |
+
+- A képernyőfigyelés csak az első `prepare` során fut; a későbbi futások a gyorsítótárat használják. A `use_adaptive` kikapcsolása kihagyja a segédérzékelőt, de néhány váltás elmaradhat.
+- Alapértelmezés szerint 3 fejezet rögzít egyszerre jelölteket; a `prepare` futása alatt a számítógép nem alszik el.
+- Memória: a figyelés képkockánként, folyamatosan dolgozik, így a memóriahasználat nem nő a videó hosszával.
 
 ---
 
