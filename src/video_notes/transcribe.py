@@ -3,7 +3,7 @@
 Backends, tried in order unless configured: WhisperX (large-v3, initial prompt, word alignment),
 faster-whisper, openai-whisper. All produce timed SRT. The initial prompt comes from the per-video
 context (asr_prompt) or a named preset; there is no subject-specific default. For long videos
-without a local GPU, transcribe on a cloud GPU (see colab/transcribe.ipynb) and place the SRT
+without a local GPU, transcribe on a cloud GPU (see colab/whisperx_for_uploading_file.ipynb) and place the SRT
 next to the video.
 """
 import shutil

@@ -1,8 +1,8 @@
-"""Agent-mode plumbing check on a real clip (no model, no login, no cost).
+"""prepare → written chapters → assemble on a real clip (no model, no login, no cost).
 
-    python tests/integration_agent_mode.py <folder with one video + srt>
+    python tests/integration_prepare_assemble.py <folder with one video + srt>
 
-prepare → a scripted "agent" writes topics.csv, knowledge.csv and chapter.md per chapter → assemble.
+prepare → a scripted writer produces topics.csv, knowledge.csv, chapter.md and review.md per chapter → assemble.
 A first, deliberately thin chapter must be refused by the checks; the corrected one must assemble.
 It proves wiring and checks only, not note quality.
 """
@@ -45,25 +45,26 @@ def main(folder):
     folder = Path(folder)
     video = next(p for p in folder.iterdir() if p.suffix.lower() == '.mp4')
     log = lambda m: print(m, file=sys.stderr)
-    make = lambda: pl.Pipeline(video, folder / 'output-agent', load_config(), cwd=folder, log=log)
-    agent = make().agent_prepare()
-    index = json.loads((agent / 'chapters.json').read_text(encoding='utf-8'))
+    make = lambda: pl.Pipeline(video, folder / 'output-test', load_config(), cwd=folder, log=log)
+    briefs = make().prepare()
+    index = json.loads((briefs / 'chapters.json').read_text(encoding='utf-8'))['chapters']
     for thin in (True, False):
         for item in index:
-            brief = (agent / item['chapter'] / 'brief.md').read_text(encoding='utf-8')
+            brief = (briefs / item['chapter'] / 'brief.md').read_text(encoding='utf-8')
             frames = re.findall(r'^(C\d\dF\d+) \| ', brief, re.M)[:2]
-            write_chapter(agent / item['chapter'], item, frames, thin)
-        note, problems = make().agent_assemble()
+            write_chapter(briefs / item['chapter'], item, frames, thin)
+        note, problems = make().assemble()
         if thin:
             assert note is None and problems, 'thin chapters must be refused'
             print('refused as expected:', problems, file=sys.stderr)
     assert note and not problems, problems
     text = note.read_text(encoding='utf-8')
-    images = re.findall(r'!\[[^\]]*\]\((assets/[^)]+)\)', text)
+    images = re.findall(r'!\[[^\]]*\]\(<?([^)<>]*_assets/C\d\dF\d+\.jpg)>?\)', text)
+    assert note.with_suffix('.docx').is_file(), 'Word copy missing'
     assert images and all((note.parent / i).is_file() for i in images), 'images missing'
     assert '[[frame:' not in text
-    assert not (agent.parent / 'model-calls').exists() or not any((agent.parent / 'model-calls').iterdir()), \
-        'agent mode must not call a model'
+    assert not (briefs.parent / 'model-calls').exists() or not any((briefs.parent / 'model-calls').iterdir()), \
+        'prepare/assemble must not call a model'
     print(f'OK {note} | chapters {len(index)} | images {len(images)} | no model calls')
 
 

@@ -4,7 +4,7 @@ Config: ~/.video-notes/config.json (%USERPROFILE%; the old %APPDATA% location is
 Not under AppData on purpose: desktop apps packaged as MSIX (Claude, Codex) each get a private
 redirected AppData, so a tool started from different apps would otherwise see different settings.
 Per-video context (optional): `<video stem>.context.md` beside the video, `video-notes.context.md`
-in the working folder, or --context. Free Markdown injected into every prompt (subject, scope,
+in the working folder, or --context. Free Markdown copied into every chapter brief (subject, scope,
 confirmed terminology, what to exclude), with an optional front-matter block for settings:
 
     ---
@@ -21,22 +21,12 @@ import re
 from pathlib import Path
 
 DEFAULTS = dict(
-    backend='claude',          # claude | codex
-    claude_model='claude-opus-5-5',  # model passed to `claude --model`
-    claude_effort='medium',          # `claude --effort`: low | medium | high | xhigh | max
-    codex_model='gpt-6.1-sol',       # model passed to `codex exec -m`
-    codex_effort='medium',           # codex model_reasoning_effort: minimal | low | medium | high
-    codex_service_tier=None,          # optional process override; never edits ~/.codex/config.toml
-    claude_path=None,          # explicit claude executable (default: PATH, then the desktop app bundle)
-    codex_path=None,           # explicit codex executable (default: PATH, then the desktop app bundle)
     output_language='中文',
     max_images=8,
-    shortlist=32,              # max distinct candidate screens shown to the vision model per chapter
+    shortlist=32,              # max distinct candidate screens listed in a chapter brief
     chapter_minutes=10,
     use_adaptive=True,         # PySceneDetect auxiliary detector (slower, better recall)
-    review_cycles=2,           # revise → re-check rounds after the first review (blocking issues only)
-    parallel_chapters=3,       # chapters processed concurrently (model calls and frame extraction)
-    fallback_backend=None,     # claude | codex: taken over automatically when the backend hits a usage limit
+    parallel_chapters=3,       # chapters whose candidate frames are extracted concurrently
     min_chars_per_minute=100,  # detail floor (prose chars per teaching minute); see render.check_density
     tesseract=None,
     ocr_langs='eng',

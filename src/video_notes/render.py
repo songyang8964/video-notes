@@ -153,10 +153,36 @@ def demote_headings(text):
     return '\n'.join(out)
 
 
-def assemble(title, chapters, out_dir: Path, filename='培训笔记.md', cjk=True):
-    """chapters: [{'text', 'frames'}] in order. Writes note + assets; returns (note_path, inserted)."""
-    assets = out_dir / 'assets'
+class ConversionUnavailable(RuntimeError):
+    pass
+
+
+def to_docx(note: Path, target: Path = None):
+    """Word copy of the note beside it (same name, .docx), images embedded so it can be shared alone.
+    Each caption already follows its image as a line of text, so pandoc's automatic figure captions are
+    turned off (they would print every caption twice)."""
+    try:
+        import pypandoc
+    except ImportError:
+        raise ConversionUnavailable('pandoc is not installed (pip install pypandoc-binary)') from None
+    target = target or note.with_suffix('.docx')
+    # Screenshots carry small CLI and table text: use the full text width instead of pandoc's
+    # resolution-based size (about 4 inches for a 1080p frame). An absolute width, capped by pandoc at the
+    # text width: frames from ffmpeg have no DPI metadata, and pandoc then ignores percentage widths.
+    text = re.sub(r'(!\[[^\]]*\]\((?:<[^>]+>|[^)\s]+)\))', r'\1{width=7in}', note.read_text(encoding='utf-8'))
+    pypandoc.convert_text(text, 'docx', format='markdown-implicit_figures', outputfile=str(target),
+                          extra_args=[f'--resource-path={note.parent}'])
+    return target
+
+
+def assemble(title, chapters, out_dir: Path, filename='培训笔记.md', cjk=True, assets_name='assets'):
+    """chapters: [{'text', 'frames'}] in order. Writes note + its image folder; returns (note_path, inserted).
+    Image links are relative (<assets_name>/<frame>.jpg), in angle brackets so folder names with spaces or
+    brackets — notes are named after their video — still work in Markdown viewers and pandoc."""
+    assets = out_dir / assets_name
     assets.mkdir(parents=True, exist_ok=True)
+    link = (lambda name: f'<{assets_name}/{name}>') if re.search(r'[\s()<>]', assets_name) else \
+        (lambda name: f'{assets_name}/{name}')
     body, inserted = [], []
     for chapter in chapters:
         text = re.sub(r'<!--.*?-->\n?', '', chapter['text'], flags=re.S).strip()
@@ -172,7 +198,7 @@ def assemble(title, chapters, out_dir: Path, filename='培训笔记.md', cjk=Tru
             inserted.append(dict(frame, caption=match[2]))
             when = stamp(frame['actual_ms'])
             source = f'（原视频 {when}）' if cjk else f' (source video {when})'
-            return f'![{match[2]}](assets/{name})\n\n*{match[2]}{source}*'
+            return f'![{match[2]}]({link(name)})\n\n*{match[2]}{source}*'
         body.append(PLACEHOLDER.sub(render, text))
     note = f'# {title}\n\n' + '\n\n'.join(body) + '\n'
     if '[[frame:' in note:
@@ -181,9 +207,11 @@ def assemble(title, chapters, out_dir: Path, filename='培训笔记.md', cjk=Tru
     # shared folder; only files this tool writes (frame-ID names) are removed, and never one that another
     # note in the folder still shows (a note the user edited is kept beside the new one).
     used = {f"{f['frame_id']}.jpg" for f in inserted}
+    folder = re.escape(assets_name)
     for other in out_dir.glob('*.md'):
         if other.name != filename:
-            used |= set(re.findall(r'\]\(assets/([^)\s]+)\)', other.read_text(encoding='utf-8', errors='replace')))
+            text = other.read_text(encoding='utf-8', errors='replace')
+            used |= set(re.findall(rf'\]\(<?{folder}/(C\d\dF\d+\.jpg)>?\)', text))
     for stale in assets.glob('*.jpg'):
         if re.fullmatch(r'C\d\dF\d+\.jpg', stale.name) and stale.name not in used:
             stale.unlink()

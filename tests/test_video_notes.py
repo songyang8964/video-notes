@@ -119,7 +119,6 @@ class PortedAlgorithmTests(unittest.TestCase):
         self.assertEqual(overlay.body_band(freq), overlay.FULL)
 
 
-
 class SubtitleChoiceTests(unittest.TestCase):
     def test_vtt_rolling_cues_are_deduplicated(self):
         with tempfile.TemporaryDirectory() as d:
@@ -179,12 +178,12 @@ class OutputProtectionTests(unittest.TestCase):
             p.work.mkdir()
             results = {'C01': dict(text='# A\n\nbody', frames=[])}
             first, _ = p.write_output('T', results)
-            self.assertEqual(first.name, '培训笔记.md')
+            self.assertEqual(first.name, 'v.md')
             again, _ = p.write_output('T', results)
-            self.assertEqual(again.name, '培训笔记.md')        # unchanged by user: refreshed in place
+            self.assertEqual(again.name, 'v.md')        # unchanged by user: refreshed in place
             first.write_text('user edits', encoding='utf-8')
             third, _ = p.write_output('T', results)
-            self.assertNotEqual(third.name, '培训笔记.md')
+            self.assertNotEqual(third.name, 'v.md')
             self.assertEqual(first.read_text(encoding='utf-8'), 'user edits')
 
     def test_english_note_name_and_caption(self):
@@ -199,9 +198,9 @@ class OutputProtectionTests(unittest.TestCase):
             image.write_bytes(b'x')
             frame = dict(frame_id='C01F00001000', path=str(image), actual_ms=61000)
             note, _ = p.write_output('T', {'C01': dict(text='# A\n\n[[frame:C01F00001000|Topology]]', frames=[frame])})
-            self.assertEqual(note.name, 'Training Notes.md')
+            self.assertEqual(note.name, 'v.md')
+            self.assertTrue(note.with_suffix('.docx').is_file())
             self.assertIn('*Topology (source video 00:01:01.000)*', note.read_text(encoding='utf-8'))
-
 
 
 class KnowledgeAndDensityTests(unittest.TestCase):
@@ -270,7 +269,6 @@ class EnglishDensityTests(unittest.TestCase):
         self.assertFalse(render.is_cjk('English'))
 
 
-
 class WorkDirTests(unittest.TestCase):
     def test_deep_folders_keep_work_out_of_max_path(self):
         import os
@@ -281,20 +279,6 @@ class WorkDirTests(unittest.TestCase):
         if os.name == 'nt' and not pipeline._long_paths_enabled():
             self.assertLessEqual(len(str(deep)), pipeline.WORK_PATH_BUDGET)
             self.assertEqual(deep.name, 'abc123def0')
-
-
-class ModelTimeoutTests(unittest.TestCase):
-    def test_timeout_ends_calls_whose_grandchild_holds_the_pipe(self):
-        import subprocess
-        import sys
-        import time
-        from video_notes.llm import run_bounded
-        script = ('import subprocess, sys, time; '
-                  "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)']); time.sleep(120)")
-        started = time.time()
-        with self.assertRaises(subprocess.TimeoutExpired):
-            run_bounded([sys.executable, '-c', script], '', 2, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        self.assertLess(time.time() - started, 40)
 
 
 class AssembleTests(unittest.TestCase):
@@ -309,156 +293,6 @@ class AssembleTests(unittest.TestCase):
         self.assertEqual(out[7], '## After')
 
 
-class WorkflowEfficiencyTests(unittest.TestCase):
-    def _model(self, d, backend='claude', fallback=('codex', 'm2', 'low')):
-        from video_notes.llm import Model
-        m = Model.__new__(Model)
-        import threading
-        m.backend, m.model, m.effort, m.timeout, m.log = backend, 'm1', 'medium', 5, lambda s: None
-        m.cache, m.calls, m.fallback, m._lock = Path(d), 0, fallback, threading.Lock()
-        m.exe = backend
-        m.reuse = [m.identity()] + (['codex:m2:low'] if fallback else [])
-        return m
-
-    def test_completed_response_of_other_backend_is_reused(self):
-        import hashlib
-        with tempfile.TemporaryDirectory() as d:
-            m = self._model(d)
-            key = hashlib.sha256('\0'.join(['codex:m2:low', 'PROMPT']).encode()).hexdigest()[:16]
-            (Path(d) / f'C01-write-{key}.md').write_text('from codex', encoding='utf-8')
-            (Path(d) / f'C01-write-{key}.ok').write_text('ok', encoding='utf-8')
-            m._run = lambda *a: self.fail('must not call the CLI')
-            self.assertEqual(m.ask('C01-write', 'PROMPT'), 'from codex')
-
-    def test_usage_limit_switches_to_fallback(self):
-        from video_notes import llm
-        with tempfile.TemporaryDirectory() as d:
-            m = self._model(d)
-            used = []
-
-            def run(prompt, images, target, log_path, state):
-                used.append(state[0])
-                if state[0] == 'claude':
-                    log_path.write_text("You've hit your usage limit", encoding='utf-8')
-                    return ''
-                return 'done'
-            m._run = run
-            original = llm.resolve
-            llm.resolve = lambda backend: backend
-            try:
-                self.assertEqual(m.ask('C01-write', 'PROMPT'), 'done')
-            finally:
-                llm.resolve = original
-            self.assertEqual(used, ['claude', 'codex'])
-            self.assertEqual(m.identity(), 'codex:m2:low')
-
-    def test_run_lock_refuses_second_run_and_clears_stale(self):
-        import os
-        from video_notes.pipeline import InputError, RunLock
-        with tempfile.TemporaryDirectory() as d:
-            (Path(d) / 'run.lock').write_text('999999', encoding='utf-8')  # stale
-            with RunLock(Path(d)):
-                (Path(d) / 'run.lock').write_text(str(os.getpid()), encoding='utf-8')
-                with self.assertRaises(InputError):
-                    RunLock(Path(d)).__enter__()
-            self.assertFalse((Path(d) / 'run.lock').exists())
-
-    def test_review_loop_rechecks_instead_of_full_review(self):
-        from video_notes.pipeline import Pipeline
-        p = Pipeline.__new__(Pipeline)
-        p.config = dict(review_cycles=2)
-        p.check = lambda *a: []
-        asked = []
-
-        class M:
-            def ask(self, name, prompt, images=()):
-                asked.append(name)
-                return {'C01-review': 'VERDICT: REVISE\n【阻断】x', 'C01-revise0': 'draft2',
-                        'C01-recheck0': 'VERDICT: PASS'}[name]
-        p.model = M()
-        draft, review, problems, passed = p.review_loop('C01', 'draft1', 'W', dict(
-            context='', rules='', max_images=8, knowledge='', frames='', cues='', earlier_frames=''), [], [], [], [])
-        self.assertEqual((draft, passed), ('draft2', True))
-        self.assertEqual(asked, ['C01-review', 'C01-revise0', 'C01-recheck0'])
-
-
-class HandoffTests(unittest.TestCase):
-    def test_text_only_resume_without_candidates_and_second_run_skips_model(self):
-        from video_notes.pipeline import Pipeline
-        from video_notes.media import sha256
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            directory = root / 'C01'
-            directory.mkdir()
-            (directory / 'topics.csv').write_text('topic_id,first_cue,last_cue,kind\nC01T01,1,1,teaching\n')
-            (directory / 'knowledge.csv').write_text('knowledge_id,content,importance\nK1,tail question,important\n')
-            (directory / 'chapter.md').write_text('detailed tail answer')
-            p = Pipeline.__new__(Pipeline)
-            p.work = root
-            p.prepare_work = p.ingest = lambda: None
-            p.video, p.srt = root / 'video.mp4', root / 'video.srt'
-            p.video.write_bytes(b'video')
-            p.srt.write_bytes(b'srt')
-            p.video_hash, p.srt_hash = sha256(p.video), sha256(p.srt)
-            p.context, p.settings, p.warnings = '', {}, []
-            p.cues = [dict(id=1, start=0, end=1000, text='tail')]
-            p.log = lambda text: None
-            p.check = lambda *args: []
-            p.chapter_values = lambda *args, **kwargs: dict(context='', rules='', max_images=8, knowledge='', frames='', cues='', earlier_frames='')
-            p.model = type('M', (), {'identity': lambda self: 'codex:test'})()
-            calls = []
-            def review(*args, **kwargs):
-                calls.append(args[0])
-                kwargs['persist']('detailed tail answer', 'VERDICT: PASS', 'reviewed')
-                return 'detailed tail answer', 'VERDICT: PASS', [], True
-            p.review_loop = review
-            p.video = root / 'video.mp4'
-            p.write_output = lambda *args: (root / 'note.md', [])
-            self.assertEqual(p.resume_review()[1], [])
-            self.assertEqual(p.resume_review()[1], [])
-            self.assertEqual(calls, ['C01'])
-
-    def test_checkpoint_invalidated_by_source_image_and_prompt_changes(self):
-        from unittest.mock import patch
-        from video_notes import checkpoint
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            (root / 'chapter.md').write_text('accepted draft')
-            frames = root / 'candidates' / 'frames'
-            frames.mkdir(parents=True)
-            image = frames / 'frame.jpg'
-            image.write_bytes(b'original')
-            source = dict(video='v', srt='s', context='c')
-            checkpoint.save(root, source, True, model='claude')
-            self.assertTrue(checkpoint.load(root, source)['passed'])
-            self.assertIsNone(checkpoint.load(root, source | {'srt': 'changed'}))
-            with patch.object(checkpoint, 'templates', return_value={'review': 'changed'}):
-                self.assertIsNone(checkpoint.load(root, source))
-            image.write_bytes(b'changed critical parameter')
-            self.assertIsNone(checkpoint.load(root, source))
-
-    def test_interrupted_recheck_preserves_revision_without_repeating_full_review(self):
-        from video_notes.pipeline import Pipeline
-        p = Pipeline.__new__(Pipeline)
-        p.config = dict(review_cycles=2)
-        p.check = lambda *args: []
-        asked, saved = [], []
-        class M:
-            def ask(self, name, prompt, images=()):
-                asked.append(name)
-                if 'recheck' in name:
-                    raise RuntimeError('quota')
-                return 'corrected detailed draft'
-        p.model = M()
-        with self.assertRaisesRegex(RuntimeError, 'quota'):
-            p.review_loop('C09', 'old draft', 'writing', dict(context='', rules='', max_images=8,
-                          knowledge='', frames='', cues='', earlier_frames=''), [], [], [], [],
-                          initial_review='VERDICT: REVISE\n【阻断】wrong next hop',
-                          persist=lambda *args: saved.append(args))
-        self.assertEqual(asked, ['C09-revise0', 'C09-recheck0'])
-        self.assertEqual(saved[-1], ('corrected detailed draft', 'VERDICT: REVISE\n【阻断】wrong next hop', 'needs-recheck'))
-
-
 class StaleAssetTests(unittest.TestCase):
     def test_unreferenced_tool_images_are_removed(self):
         with tempfile.TemporaryDirectory() as d:
@@ -471,68 +305,6 @@ class StaleAssetTests(unittest.TestCase):
             frame = dict(frame_id='C01F00000002', path=str(src), actual_ms=1000)
             render.assemble('T', [dict(text='# A\n\n[[frame:C01F00000002|cap]]', frames=[frame])], out, 'n.md')
             self.assertEqual(sorted(p.name for p in (out / 'assets').iterdir()), ['C01F00000002.jpg', 'my-photo.jpg'])
-
-
-class TokenSavingTests(unittest.TestCase):
-    def test_internal_ids_in_prose_are_rejected(self):
-        text = '# T\n\n## A\n<!-- cues:1-2 -->\nAs explained in C01 and Chapter 8, see C08F03865397.\n'
-        problems = render.check_chapter(text, [1, 2], [dict(topic_id='C01T01', first_cue='1', last_cue='2')], [], 8)
-        self.assertTrue(any('internal chapter/frame IDs' in p for p in problems))
-        clean = '# T\n\n## A\n<!-- cues:1-2; C01 note -->\nThe R1 and SW-12 switches. [[frame:C01F00000001|cap]]\n'
-        self.assertFalse(any('internal' in p for p in render.check_chapter(
-            clean, [1, 2], [dict(topic_id='C01T01', first_cue='1', last_cue='2')],
-            [dict(frame_id='C01F00000001', topic_id='C01T01')], 8)))
-
-    def test_claude_runs_minimal_and_records_usage(self):
-        import json
-        import subprocess
-        import threading
-        from video_notes import llm
-        m = llm.Model.__new__(llm.Model)
-        m.backend, m.model, m.effort, m.timeout, m.exe = 'claude', 'opus', 'medium', 5, 'claude'
-        m.usage, m._lock = {}, threading.Lock()
-        seen = {}
-
-        def fake(command, prompt, timeout, **kw):
-            seen['command'] = command
-            out = json.dumps(dict(result='ANSWER', usage=dict(input_tokens=2, cache_creation_input_tokens=1600,
-                                                              cache_read_input_tokens=0, output_tokens=7),
-                                  total_cost_usd=0.01))
-            return subprocess.CompletedProcess(command, 0, out, None)
-        original = llm.run_bounded
-        llm.run_bounded = fake
-        try:
-            with tempfile.TemporaryDirectory() as d:
-                m.cache = Path(d)
-                target = Path(d) / 'C01-write-x.md'
-                self.assertEqual(m._run('P', [], target, Path(d) / 'log'), 'ANSWER')
-                self.assertEqual(json.loads(target.with_suffix('.usage.json').read_text())['output_tokens'], 7)
-        finally:
-            llm.run_bounded = original
-        for flag in ('--strict-mcp-config', '--system-prompt', '--disable-slash-commands'):
-            self.assertIn(flag, seen['command'])
-        self.assertEqual(seen['command'][seen['command'].index('--tools') + 1], 'Read')
-        self.assertEqual(m.usage['cache_creation_input_tokens'], 1600)
-
-
-class PreflightTests(unittest.TestCase):
-    def test_estimate_counts_text_only_chapters(self):
-        from video_notes.pipeline import preflight
-        chapters = [[dict(start=0)], [dict(start=600000)], [dict(start=6000000)]]
-        line = preflight(chapters, 5000000, dict(review_cycles=2, shortlist=32))
-        self.assertIn('3 chapters (1 without picture)', line)
-        self.assertIn('between 12 and 27', line)  # 3*3 + 2 + 1 ; 12 + 2*2*3 + 3
-
-
-class ModelArgumentTests(unittest.TestCase):
-    def test_default_models_and_effort_reach_the_cli(self):
-        from video_notes.config import DEFAULTS
-        from video_notes.llm import model_args
-        self.assertEqual(model_args('claude', DEFAULTS['claude_model'], DEFAULTS['claude_effort']),
-                         ['--model', 'claude-opus-5-5', '--effort', 'medium'])
-        self.assertEqual(model_args('codex', DEFAULTS['codex_model'], DEFAULTS['codex_effort']),
-                         ['-m', 'gpt-6.1-sol', '-c', 'model_reasoning_effort="medium"'])
-        self.assertEqual(model_args('claude', None, None), [])
 
 
 class DuplicateScreenTests(unittest.TestCase):
@@ -562,8 +334,26 @@ class DuplicateScreenTests(unittest.TestCase):
         self.assertEqual(live[0]['status'], 'duplicate')
 
 
-if __name__ == '__main__':
-    unittest.main()
+class SafetyTests(unittest.TestCase):
+    def test_run_lock_refuses_second_run_and_clears_stale(self):
+        import os
+        from video_notes.pipeline import InputError, RunLock
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / 'run.lock').write_text('999999', encoding='utf-8')  # stale
+            with RunLock(Path(d)):
+                (Path(d) / 'run.lock').write_text(str(os.getpid()), encoding='utf-8')
+                with self.assertRaises(InputError):
+                    RunLock(Path(d)).__enter__()
+            self.assertFalse((Path(d) / 'run.lock').exists())
+
+    def test_internal_ids_in_prose_are_rejected(self):
+        text = '# T\n\n## A\n<!-- cues:1-2 -->\nAs explained in C01 and Chapter 8, see C08F03865397.\n'
+        problems = render.check_chapter(text, [1, 2], [dict(topic_id='C01T01', first_cue='1', last_cue='2')], [], 8)
+        self.assertTrue(any('internal chapter/frame IDs' in p for p in problems))
+        clean = '# T\n\n## A\n<!-- cues:1-2; C01 note -->\nThe R1 and SW-12 switches. [[frame:C01F00000001|cap]]\n'
+        self.assertFalse(any('internal' in p for p in render.check_chapter(
+            clean, [1, 2], [dict(topic_id='C01T01', first_cue='1', last_cue='2')],
+            [dict(frame_id='C01F00000001', topic_id='C01T01')], 8)))
 
 
 if __name__ == '__main__':
