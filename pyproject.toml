@@ -8,7 +8,6 @@ version = "0.2.0"
 description = "Turn a local lecture or training video into an illustrated, shareable note (Markdown and Word), written with an assistant in a chat."
 readme = "README.md"
 requires-python = ">=3.10"
-license-files = ["NOTICE"]
 authors = [{ name = "songyang8964" }]
 dependencies = [
     "av>=12",

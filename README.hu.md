@@ -401,5 +401,3 @@ src/video_notes/
   prompts/        írási szabályok (rules.md) és a fejezetcsomag sablonja (brief.md)
 colab/whisperx_for_uploading_file.ipynb   Colab T4 GPU feliratkészítő jegyzetfüzet
 ```
-
-A harmadik féltől származó licencnyilatkozatok a [NOTICE](NOTICE) fájlban vannak.

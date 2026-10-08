@@ -401,5 +401,3 @@ src/video_notes/
   prompts/        写作规则（rules.md）与每章资料包模板（brief.md）
 colab/whisperx_for_uploading_file.ipynb   Colab T4 GPU 字幕笔记本
 ```
-
-第三方许可声明见 [NOTICE](NOTICE)。

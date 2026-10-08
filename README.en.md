@@ -401,5 +401,3 @@ src/video_notes/
   prompts/        writing rules (rules.md) and the chapter brief template (brief.md)
 colab/whisperx_for_uploading_file.ipynb   Colab T4 GPU subtitle notebook
 ```
-
-Third-party license notices are in [NOTICE](NOTICE).
